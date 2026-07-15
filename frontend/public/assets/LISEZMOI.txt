@@ -1,0 +1,5 @@
+Placez ici le logo : logo-fbelec.png
+(référencé par le composant <Logo> via /assets/logo-fbelec.png)
+
+Récupérez-le depuis l'ancien serveur :
+  /home/botuser/fbelec/backend/public/assets/logo-fbelec.png

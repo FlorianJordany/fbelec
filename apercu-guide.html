@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Aperçu — Page Guide (FB ELEC)</title>
+<!-- ⚠️ Fichier d'APERÇU uniquement (reproduction statique de la page Guide React).
+     Sert à valider textes & apparence. Ne pas déployer. -->
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700&family=Barlow+Condensed:wght@600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<style>
+:root{
+  --jaune:#F5C518; --jaune-deep:#A8780A; --noir:#1a1a1a; --ink:#20242a;
+  --slate:#5c656f; --muted:#98a0a9; --line:#e9ebee; --line-strong:#d7dbe0;
+  --bg-soft:#f5f6f8;
+  --c-done:#2e9e6b; --c-done-ink:#1d6b47;
+  --c-blocked:#d9543b; --c-blocked-ink:#b23a23;
+  --r-card:14px; --r-input:10px; --r-btn:10px;
+  --shadow:0 1px 3px rgba(20,22,30,.05),0 6px 18px rgba(20,22,30,.05);
+  --shadow-lg:0 14px 44px rgba(20,22,30,.14);
+  --font-display:'Barlow Condensed',system-ui,sans-serif;
+  --font-head:'Barlow',system-ui,sans-serif;
+  --font-body:'Barlow',system-ui,sans-serif;
+}
+*{box-sizing:border-box} html,body{margin:0;padding:0;overflow-x:hidden;width:100%}
+body{font-family:var(--font-body);color:var(--ink);background:var(--bg-soft);
+  -webkit-font-smoothing:antialiased;font-size:16px;line-height:1.5;
+  min-height:100vh;display:flex;flex-direction:column}
+h1,h2,h3,h4{text-wrap:balance} p{text-wrap:pretty}
+.fb-wrap{max-width:1200px;margin:0 auto;padding-left:24px;padding-right:24px}
+.fb-wrap div{min-width:0}
+.card{background:#fff;border:1px solid var(--line);border-radius:var(--r-card);box-shadow:var(--shadow)}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:9px;padding:12px 20px;
+  font-size:15px;font-family:var(--font-head);font-weight:600;border-radius:var(--r-btn);
+  border:1.5px solid transparent;cursor:pointer;line-height:1.15;text-decoration:none}
+.btn-primary{background:var(--jaune);color:#1a1a1a;border-color:var(--jaune)}
+.btn-ghost{background:transparent;color:#fff;border-color:rgba(255,255,255,.3)}
+.fb-strip{display:grid;grid-template-columns:repeat(3,1fr);gap:18px}
+@media(max-width:980px){ .fb-strip{grid-template-columns:repeat(2,1fr)} }
+@media(max-width:640px){
+  .fb-wrap{padding-left:16px;padding-right:16px}
+  .fb-hide-mobile{display:none}
+  .fb-strip{grid-template-columns:1fr;gap:18px}
+}
+svg{display:block}
+</style>
+</head>
+<body>
+
+<!-- En-tête -->
+<header style="position:sticky;top:0;z-index:40;background:#fff;border-bottom:1px solid var(--line)">
+  <div class="fb-wrap" style="height:68px;display:flex;align-items:center;gap:16px">
+    <img src="frontend/public/assets/logo-fbelec.png" alt="FB ELEC" style="height:38px;width:auto;display:block"/>
+    <div class="fb-hide-mobile" style="width:1px;height:28px;background:var(--line)"></div>
+    <div class="fb-hide-mobile" style="display:flex;align-items:center;gap:8px">
+      <span style="font-family:var(--font-head);font-weight:700;font-size:15px;color:var(--ink)">Espace suivi</span>
+    </div>
+    <div style="flex:1"></div>
+    <button style="display:inline-flex;align-items:center;gap:8px;padding:8px 13px;background:var(--bg-soft);
+      border:1px solid var(--line-strong);border-radius:999px;cursor:pointer;font-family:var(--font-head);
+      font-weight:600;font-size:13.5px;color:var(--ink)">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M9.3 9a2.8 2.8 0 0 1 5.3 1c0 1.9-2.6 2.1-2.6 4"/><circle cx="12" cy="17.2" r=".6" fill="currentColor"/></svg>
+      <span class="fb-hide-mobile">Guide</span>
+    </button>
+    <button title="Déconnexion" style="display:grid;place-items:center;width:40px;height:40px;border-radius:999px;
+      background:var(--bg-soft);border:1px solid var(--line-strong);cursor:pointer;color:var(--slate)">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="m16 17 5-5-5-5M21 12H9"/></svg>
+    </button>
+  </div>
+</header>
+
+<!-- Lien retour -->
+<div class="fb-wrap" style="padding-top:22px">
+  <span style="display:inline-flex;align-items:center;gap:7px;color:var(--slate);font-size:14px;font-family:var(--font-head);font-weight:600">
+    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5m6-6-6 6 6 6"/></svg>Mes chantiers
+  </span>
+</div>
+
+<main class="fb-wrap" style="padding-top:20px;padding-bottom:60px">
+
+  <!-- Hero -->
+  <div style="position:relative;overflow:hidden;border-radius:var(--r-card);background:var(--noir);color:#fff;padding:34px 30px;margin-bottom:34px">
+    <div style="position:absolute;inset:0;background:radial-gradient(circle at 100% 0%,rgba(245,197,24,.22),transparent 55%)"></div>
+    <div style="position:relative">
+      <div style="display:inline-flex;align-items:center;gap:8px;background:rgba(255,255,255,.1);border-radius:999px;padding:5px 12px;margin-bottom:14px">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--jaune)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M9.3 9a2.8 2.8 0 0 1 5.3 1c0 1.9-2.6 2.1-2.6 4"/><circle cx="12" cy="17.2" r=".6" fill="var(--jaune)"/></svg>
+        <span style="font-size:12.5px;font-family:var(--font-head);font-weight:700;letter-spacing:.06em;text-transform:uppercase">Guide d'utilisation</span>
+      </div>
+      <h1 style="margin:0 0 10px;font-family:var(--font-display);font-weight:700;font-size:clamp(30px,5vw,44px);text-transform:uppercase;line-height:1.05">
+        Créer et suivre<br/>votre chantier
+      </h1>
+      <p style="margin:0;max-width:560px;font-size:16px;color:rgba(255,255,255,.8);line-height:1.6">
+        En quelques étapes simples, déposez votre demande de raccordement et suivez son avancement en temps réel, où que vous soyez.
+      </p>
+    </div>
+  </div>
+
+  <!-- SECTION 1 -->
+  <div style="margin-bottom:40px">
+    <div style="display:flex;align-items:center;gap:11px;margin-bottom:18px">
+      <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="var(--ink)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
+      <h3 style="margin:0;font-size:19px;font-family:var(--font-head);font-weight:700;color:var(--ink);letter-spacing:-.01em">Créer un chantier en 3 étapes</h3>
+      <span style="flex:1;height:1px;background:var(--line)"></span>
+    </div>
+
+    <div class="fb-strip">
+      <!-- Étape 1 -->
+      <div class="card" style="padding:24px;display:flex;flex-direction:column;gap:14px">
+        <div style="display:flex;align-items:center;gap:12px">
+          <div style="position:relative;width:48px;height:48px;border-radius:14px;flex:0 0 auto;background:var(--jaune);display:grid;place-items:center;color:#1a1a1a">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21s-7-6.2-7-11a7 7 0 0 1 14 0c0 4.8-7 11-7 11Z"/><circle cx="12" cy="10" r="2.5"/></svg>
+            <span style="position:absolute;top:-8px;right:-8px;width:24px;height:24px;border-radius:999px;background:var(--noir);color:#fff;display:grid;place-items:center;font-family:var(--font-head);font-weight:700;font-size:13px;border:2px solid var(--bg-soft)">1</span>
+          </div>
+          <h3 style="margin:0;font-family:var(--font-head);font-weight:700;font-size:18px;color:var(--ink)">Vos informations</h3>
+        </div>
+        <p style="margin:0;font-size:14.5px;color:var(--slate);line-height:1.55">Renseignez l'adresse du chantier, l'adresse de facturation et les informations principales de votre projet.</p>
+      </div>
+      <!-- Étape 2 -->
+      <div class="card" style="padding:24px;display:flex;flex-direction:column;gap:14px">
+        <div style="display:flex;align-items:center;gap:12px">
+          <div style="position:relative;width:48px;height:48px;border-radius:14px;flex:0 0 auto;background:var(--jaune);display:grid;place-items:center;color:#1a1a1a">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3v5h5"/><path d="M14 3H6a1 1 0 0 0-1 1v16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8l-5-5Z"/></svg>
+            <span style="position:absolute;top:-8px;right:-8px;width:24px;height:24px;border-radius:999px;background:var(--noir);color:#fff;display:grid;place-items:center;font-family:var(--font-head);font-weight:700;font-size:13px;border:2px solid var(--bg-soft)">2</span>
+          </div>
+          <h3 style="margin:0;font-family:var(--font-head);font-weight:700;font-size:18px;color:var(--ink)">Vos documents</h3>
+        </div>
+        <p style="margin:0;font-size:14.5px;color:var(--slate);line-height:1.55">Déposez les pièces du dossier. Trois sont obligatoires : le permis de construire, le plan de situation et le mandat. Le plan de masse et des photos sont facultatifs mais utiles.</p>
+      </div>
+      <!-- Étape 3 -->
+      <div class="card" style="padding:24px;display:flex;flex-direction:column;gap:14px">
+        <div style="display:flex;align-items:center;gap:12px">
+          <div style="position:relative;width:48px;height:48px;border-radius:14px;flex:0 0 auto;background:var(--jaune);display:grid;place-items:center;color:#1a1a1a">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12 4.5 4.5L19 7"/></svg>
+            <span style="position:absolute;top:-8px;right:-8px;width:24px;height:24px;border-radius:999px;background:var(--noir);color:#fff;display:grid;place-items:center;font-family:var(--font-head);font-weight:700;font-size:13px;border:2px solid var(--bg-soft)">3</span>
+          </div>
+          <h3 style="margin:0;font-family:var(--font-head);font-weight:700;font-size:18px;color:var(--ink)">Validation</h3>
+        </div>
+        <p style="margin:0;font-size:14.5px;color:var(--slate);line-height:1.55">Vérifiez le récapitulatif puis envoyez votre demande. L'équipe FB ELEC la reçoit aussitôt et vous recontacte.</p>
+      </div>
+    </div>
+
+    <!-- Rappel documents -->
+    <div style="margin-top:18px;display:flex;gap:13px;align-items:flex-start;flex-wrap:wrap;padding:16px 18px;border-radius:var(--r-card);background:color-mix(in srgb,var(--jaune) 12%,#fff);border:1px solid color-mix(in srgb,var(--jaune) 40%,transparent)">
+      <span style="color:var(--jaune-deep);display:flex;flex:0 0 auto">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 11v5"/><circle cx="12" cy="7.7" r=".6" fill="currentColor"/></svg>
+      </span>
+      <div style="flex:1;min-width:200px">
+        <div style="font-family:var(--font-head);font-weight:700;font-size:15px;color:var(--ink);margin-bottom:3px">Préparez vos documents obligatoires</div>
+        <div style="font-size:14px;color:var(--slate);line-height:1.5">Permis de construire · Plan de situation · Mandat. Formats acceptés : PDF, JPG, PNG.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- SECTION 2 -->
+  <div style="margin-bottom:40px">
+    <div style="display:flex;align-items:center;gap:11px;margin-bottom:18px">
+      <svg width="21" height="21" viewBox="0 0 24 24" fill="var(--ink)" stroke="none"><path d="M13 2 4 14h6l-1 8 9-12h-6l1-8Z"/></svg>
+      <h3 style="margin:0;font-size:19px;font-family:var(--font-head);font-weight:700;color:var(--ink);letter-spacing:-.01em">Suivre votre chantier au quotidien</h3>
+      <span style="flex:1;height:1px;background:var(--line)"></span>
+    </div>
+
+    <div class="fb-strip">
+      <!-- Carte: avancement -->
+      <div class="card" style="padding:22px;display:flex;flex-direction:column;gap:12px">
+        <div style="width:44px;height:44px;border-radius:12px;flex:0 0 auto;background:var(--bg-soft);display:grid;place-items:center;color:var(--jaune-deep)">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M13 2 4 14h6l-1 8 9-12h-6l1-8Z"/></svg>
+        </div>
+        <h3 style="margin:0;font-family:var(--font-head);font-weight:700;font-size:16.5px;color:var(--ink)">Suivez l'avancement</h3>
+        <p style="margin:0;font-size:14px;color:var(--slate);line-height:1.55">Chaque chantier affiche une frise d'étapes : terminée, en cours, à venir ou bloquée. Le badge coloré indique l'étape en cours d'un coup d'œil.</p>
+      </div>
+      <!-- Carte: e-mail -->
+      <div class="card" style="padding:22px;display:flex;flex-direction:column;gap:12px">
+        <div style="width:44px;height:44px;border-radius:12px;flex:0 0 auto;background:var(--bg-soft);display:grid;place-items:center;color:var(--jaune-deep)">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/></svg>
+        </div>
+        <h3 style="margin:0;font-family:var(--font-head);font-weight:700;font-size:16.5px;color:var(--ink)">Soyez prévenu</h3>
+        <p style="margin:0;font-size:14px;color:var(--slate);line-height:1.55">À chaque étape franchie par FB ELEC, vous recevez un e-mail automatique. Inutile de vérifier en permanence.</p>
+      </div>
+      <!-- Carte: docs & photos -->
+      <div class="card" style="padding:22px;display:flex;flex-direction:column;gap:12px">
+        <div style="width:44px;height:44px;border-radius:12px;flex:0 0 auto;background:var(--bg-soft);display:grid;place-items:center;color:var(--jaune-deep)">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8h3l1.5-2h7L17 8h3a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1Z"/><circle cx="12" cy="13" r="3.2"/></svg>
+        </div>
+        <h3 style="margin:0;font-family:var(--font-head);font-weight:700;font-size:16.5px;color:var(--ink)">Documents &amp; photos</h3>
+        <p style="margin:0;font-size:14px;color:var(--slate);line-height:1.55">Consultez les documents et photos ajoutés par FB ELEC, et déposez vous-même de nouveaux fichiers depuis la fiche du chantier.</p>
+      </div>
+      <!-- Carte: action requise -->
+      <div class="card" style="padding:22px;display:flex;flex-direction:column;gap:12px">
+        <div style="width:44px;height:44px;border-radius:12px;flex:0 0 auto;background:var(--bg-soft);display:grid;place-items:center;color:var(--jaune-deep)">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 2 20h20L12 3Z"/><path d="M12 10v4"/><circle cx="12" cy="17.5" r=".6" fill="currentColor"/></svg>
+        </div>
+        <h3 style="margin:0;font-family:var(--font-head);font-weight:700;font-size:16.5px;color:var(--ink)">Action requise</h3>
+        <p style="margin:0;font-size:14px;color:var(--slate);line-height:1.55">Si une action de votre part est attendue, un bandeau « Action requise » apparaît sur le chantier concerné.</p>
+      </div>
+      <!-- Carte: contact -->
+      <div class="card" style="padding:22px;display:flex;flex-direction:column;gap:12px">
+        <div style="width:44px;height:44px;border-radius:12px;flex:0 0 auto;background:var(--bg-soft);display:grid;place-items:center;color:var(--jaune-deep)">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4h4l2 5-3 2a13 13 0 0 0 5 5l2-3 5 2v4a2 2 0 0 1-2 2A17 17 0 0 1 3 6a2 2 0 0 1 2-2Z"/></svg>
+        </div>
+        <h3 style="margin:0;font-family:var(--font-head);font-weight:700;font-size:16.5px;color:var(--ink)">Restez en contact</h3>
+        <p style="margin:0;font-size:14px;color:var(--slate);line-height:1.55">Envoyez un message en un clic, ou appelez FB ELEC si besoin. Un bloc de contact est présent sur chaque page.</p>
+      </div>
+      <!-- Carte: modifier -->
+      <div class="card" style="padding:22px;display:flex;flex-direction:column;gap:12px">
+        <div style="width:44px;height:44px;border-radius:12px;flex:0 0 auto;background:var(--bg-soft);display:grid;place-items:center;color:var(--jaune-deep)">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z"/></svg>
+        </div>
+        <h3 style="margin:0;font-family:var(--font-head);font-weight:700;font-size:16.5px;color:var(--ink)">Modifiez vos infos</h3>
+        <p style="margin:0;font-size:14px;color:var(--slate);line-height:1.55">Besoin de corriger une adresse ou une date ? Le bouton « Modifier » sur la fiche du chantier met à jour vos informations.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- CTA -->
+  <div class="card" style="padding:28px;text-align:center;background:var(--noir);border-color:var(--noir)">
+    <h2 style="margin:0 0 8px;font-family:var(--font-display);font-weight:700;font-size:28px;text-transform:uppercase;color:#fff;letter-spacing:-.01em">Prêt à démarrer ?</h2>
+    <p style="margin:0 0 20px;font-size:15.5px;color:rgba(255,255,255,.78)">Créez votre premier chantier ou retrouvez le suivi de vos demandes en cours.</p>
+    <div style="display:flex;gap:12px;justify-content:center;flex-wrap:wrap">
+      <span class="btn btn-primary">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
+        Créer un chantier
+      </span>
+      <span class="btn btn-ghost">
+        Voir mes chantiers
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m9 6 6 6-6 6"/></svg>
+      </span>
+    </div>
+  </div>
+
+</main>
+
+<!-- Footer -->
+<footer style="margin-top:auto;border-top:1px solid var(--line);padding:22px 0;background:#fff">
+  <div class="fb-wrap" style="text-align:center;font-size:12.5px;color:var(--muted)">
+    Encore conçu par <a href="https://outilab.fr" target="_blank" rel="noopener noreferrer" style="color:var(--jaune-deep);font-weight:600;text-decoration:none">OutiLab</a>
+  </div>
+</footer>
+
+</body>
+</html>

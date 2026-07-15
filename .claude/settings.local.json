@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(curl.exe -s -m 15 https://api-suividechantier.fbelec.fr/health)",
+      "PowerShell(curl.exe -s -o $null -w \"%{http_code}\" -m 15 https://api-suividechantier.fbelec.fr/health)",
+      "Bash(xargs wc -l)"
+    ]
+  }
+}

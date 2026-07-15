@@ -1,0 +1,297 @@
+# Audit de sécurité — FB ELEC Suivi de chantier (v2)
+
+**Périmètre :** `backend/` (Express/Node), `frontend/` (React/Vite), `db/schema.sql`, configs.
+**Date :** 2026-06-14
+**Auteur :** Audit applicatif (Node/Express/React).
+
+---
+
+## 1. Résumé du niveau de risque
+
+Niveau global **MODÉRÉ**. L'architecture est saine sur les points les plus sensibles :
+
+- **Injection SQL : aucune.** Toutes les requêtes utilisent des **requêtes paramétrées**
+  (`$1, $2, …`). Les rares clauses dynamiques (`UPDATE … SET`) ne concatènent que des
+  **noms de colonnes issus d'une liste blanche** ; les valeurs restent paramétrées.
+- **Contrôle d'accès :** routes admin protégées par `authAdmin`, routes client par
+  `authClient` ; les ressources client sont systématiquement filtrées par `client_id`
+  (pas d'IDOR côté client).
+- **XSS :** React échappe par défaut, **aucun** `dangerouslySetInnerHTML` / `innerHTML` /
+  `eval` / `new Function` dans le frontend.
+- **CSRF :** non applicable — authentification par **JWT en en-tête `Authorization`**
+  (pas de cookie de session).
+
+Les vulnérabilités à corriger concernent surtout les **uploads de fichiers**, la
+**verbosité des erreurs**, le **durcissement CORS / JWT / rate-limiting** et la
+**validation d'entrées**.
+
+---
+
+## 2. Vulnérabilités identifiées
+
+| # | Gravité | Fichier | Vulnérabilité |
+|---|---------|---------|----------------|
+| 1 | **Haute** | `backend/src/middleware/upload.js` | **Path traversal** via `req.params.id` dans le chemin de stockage multer. |
+| 2 | **Haute** | `backend/src/middleware/upload.js` | **Upload de fichier dangereux** : l'extension stockée vient du nom d'origine (`.php`, etc.), filtre basé sur le seul `mimetype` (falsifiable) → risque d'exécution si Apache sert le dossier. |
+| 3 | **Moyenne** | `backend/src/server.js` | **Fuite d'informations** : le gestionnaire d'erreurs renvoie `err.message` brut sur les 500 (messages internes DB, etc.). |
+| 4 | **Moyenne** | `backend/src/server.js` | **CORS potentiellement permissif** : `origin: '*'` possible ; pas de refus explicite des origines non whitelistées. |
+| 5 | **Moyenne** | `backend/src/middleware/*.js`, `auth.js` | **JWT** : algorithme non épinglé à la vérification (`algorithms` non fixé). |
+| 6 | **Moyenne** | `backend/src/routes/client/chantiers.js` | **Pas de rate-limiting** sur `/api/client/contact` (envoi d'e-mails → spam/abus) ni de limite globale API. |
+| 7 | **Basse** | `backend/src/server.js` | Taille du corps des requêtes non bornée explicitement (défaut 100 kb). |
+| 8 | **Basse** | tous les handlers d'écriture | **Validation d'entrée** limitée (présence/trim) : pas de bornes de longueur ni de format e-mail strict → abus/stockage non borné. |
+| 9 | **Basse** | `frontend` (`window.open`) | Ouverture d'onglet sans `noreferrer` (déjà `noopener`). |
+| 10 | **Basse / à vérifier** | déploiement o2switch | `.env` situé dans la racine du sous-domaine API : exposition possible si Apache sert les fichiers statiques directement. À **vérifier** (voir §5). |
+| 11 | **Info** | `frontend` (localStorage) | JWT stocké en `localStorage` (exposé en cas de XSS). Acceptable ici (pas de cookie/CSRF, React échappe), documenté. |
+
+Points **vérifiés sans défaut** : SQL injection (aucune), IDOR client (filtrage `client_id`),
+SSRF (aucun fetch d'URL utilisateur côté serveur — la feature « agents » a été retirée),
+open redirect (navigation interne, `?chantier=` casté en entier), secrets frontend
+(seul `VITE_API_URL` est exposé, ce qui est voulu).
+
+---
+
+## 3. Corrections prévues
+
+1. **Upload (path traversal)** — forcer `req.params.id` à un **entier positif** avant
+   de construire le chemin de stockage ; sinon rejeter.
+2. **Upload (extension)** — n'accepter que des **extensions en liste blanche** (cohérentes
+   avec les mimetypes), refuser le reste ; écrire un `.htaccess` dans le dossier `uploads`
+   qui **désactive l'exécution de scripts** (défense en profondeur).
+3. **Erreurs** — masquer le message des **500** (`Erreur serveur.`) et logguer le détail
+   côté serveur ; conserver les messages 4xx (utiles à l'utilisateur) ; gérer proprement
+   les erreurs multer (400).
+4. **CORS** — whitelist stricte par origine (liste séparée par virgules) ; refus implicite
+   des origines non autorisées ; `*` possible uniquement si explicitement configuré.
+5. **JWT** — épingler `algorithms: ['HS256']` à la vérification.
+6. **Rate-limiting** — limiteur dédié sur `/api/client/contact`, limiteur global généreux
+   sur l'API (en plus du limiteur d'auth existant).
+7. **Corps de requête** — limite explicite (`100kb`) sur JSON / urlencoded.
+8. **Validation** — helper interne (sans dépendance lourde) : bornes de longueur et
+   format e-mail, appliqué aux points d'écriture sensibles (login, création client,
+   création chantier, contact).
+9. **Frontend** — `noopener,noreferrer` sur les `window.open`.
+10. **Déploiement** — instructions de vérification/protection du `.env` (§5).
+
+> **Choix d'outillage :** plutôt que d'introduire une grosse dépendance de validation
+> (zod/express-validator) et de réécrire toutes les routes — au risque de régressions —
+> j'ajoute un **petit validateur interne** ciblé. L'adoption de `zod` reste une
+> amélioration recommandée (voir §6).
+
+---
+
+## 4. Corrections appliquées
+
+| # | Statut | Fichier(s) | Détail |
+|---|--------|-----------|--------|
+| 1 | ✅ | `middleware/upload.js` | `req.params.id` forcé en entier positif strict avant construction du chemin (anti path-traversal). `req.schema` restreint à `[a-z0-9_]`. |
+| 2 | ✅ | `middleware/upload.js`, `server.js` | Liste blanche **mimetype + extension** ; extension stockée forcée depuis la liste (sinon `.bin`). `.htaccess` écrit dans `uploads/` (désactive l'exécution de scripts). `toPublicUrl` refuse tout chemin sortant du dossier uploads. |
+| 3 | ✅ | `server.js` | Gestionnaire d'erreurs : **500 masqués** (`Erreur serveur.`, détail loggué côté serveur uniquement), erreurs multer → 400 lisible, 4xx conservés. `/health` ne renvoie plus le message d'erreur DB. |
+| 4 | ✅ | `server.js` | CORS : whitelist stricte par origine (liste `,`), refus implicite des origines non autorisées. |
+| 5 | ✅ | `middleware/authAdmin.js`, `authClient.js`, `routes/auth.js` | JWT épinglé à **HS256** (signature + vérification). |
+| 6 | ✅ | `server.js` | Rate-limiting : global API (600/15min), auth (10/15min échecs), **contact (5/h)**. |
+| 7 | ✅ | `server.js` | `express.json`/`urlencoded` limités à **100 kb** ; `x-powered-by` désactivé ; static `/uploads` en `dotfiles: deny`. |
+| 8 | ✅ | `utils/validate.js` (nouveau), `routes/admin/clients.js`, `routes/client/chantiers.js` | Validation : bornes de longueur + format e-mail sur création client et message de contact. Les autres champs texte sont bornés par la limite de corps (100 kb). |
+| 9 | ✅ | `frontend/src/client.jsx`, `admin.jsx` | `window.open(..., 'noopener,noreferrer')`. |
+| — | ✅ | `package.json` | **`nodemailer` 6 → ^8.0.11** (corrige 1 faille haute : injection commande SMTP / DoS addressparser). `npm audit` → **0 vulnérabilité**. |
+
+### Fichiers modifiés
+- `backend/src/server.js`
+- `backend/src/middleware/upload.js`, `authAdmin.js`, `authClient.js`
+- `backend/src/routes/auth.js`, `routes/admin/clients.js`, `routes/client/chantiers.js`
+- `backend/src/utils/validate.js` *(nouveau)*
+- `backend/package.json`
+- `frontend/src/client.jsx`, `frontend/src/admin.jsx`
+
+### Vérifications effectuées
+- `node --check` OK sur tous les fichiers backend.
+- Chargement complet du module `server.js` sans erreur (imports/middlewares résolus).
+- `npm audit` → **0 vulnérabilité**.
+- `npm run build` (frontend) OK (35 modules).
+
+---
+
+## 5. À vérifier / faire manuellement
+
+1. **Exposition du `.env`** — ✅ **VÉRIFIÉ / NON EXPOSÉ**. `curl http://…/.env` renvoie
+   un **403** de la couche « Tiger Protect » d'o2switch, qui bloque par défaut (non
+   désactivable) les fichiers sensibles (`.env`, `.htaccess`, `.git`, `package.json`…).
+   Les fichiers source ne sont pas exposés non plus : Passenger route toute requête non
+   bloquée vers Node, et Express ne sert en statique que `/uploads` → `/app.js`, `/src/…`
+   renvoient un 404 JSON. Aucune action requise.
+2. **Rotation des secrets.** Le mot de passe PostgreSQL a été saisi en clair pendant
+   l'installation (chat/logs). **Change-le** dans cPanel et mets à jour `DATABASE_URL`.
+   Vérifie aussi que `JWT_SECRET` est long et unique (différent dev/prod).
+3. **`UPLOAD_ROOT` hors racine web** (optionnel, recommandé) : définir `UPLOAD_ROOT`
+   sur un dossier **en dehors** du sous-domaine (ex. `~/fbelec-uploads`) pour que les
+   fichiers ne soient jamais servis directement par Apache. Le code le supporte déjà
+   (variable d'env) ; pense à déplacer les fichiers existants et à réécrire la colonne
+   `url` en conséquence.
+4. **CORS en prod** : `CORS_ORIGIN` doit valoir l'origine **exacte** du front (pas `*`).
+5. **HTTPS en prod** (voir `docs/GUIDE-PROD.md`) — le HSTS de helmet ne prend effet
+   qu'en HTTPS.
+6. **Données héritées** : les e-mails clients importés de l'ancienne base n'ont pas été
+   re-validés ; rien de bloquant, mais à garder en tête.
+
+## 6. Recommandations de déploiement sécurisé
+
+- `NODE_ENV=production` (positionné par cPanel « Application mode: Production »).
+- Utilisateur PostgreSQL **dédié à l'app** avec le minimum de privilèges (pas de superuser).
+- Sauvegardes régulières base + `uploads/`.
+- Tenir les dépendances à jour : `npm audit` périodique, surveiller `multer`/`sharp`/`nodemailer`.
+- **Amélioration future** : adopter `zod` pour une validation par schéma sur **toutes**
+  les routes (actuellement validation ciblée sur les points sensibles).
+- Ne jamais exposer de secret via une variable `VITE_` (seul `VITE_API_URL`, public, est utilisé).
+
+## 7. Évolution UI — autocomplétion d'adresse (2026-06-18)
+
+- **Fonctionnalité** : autocomplétion d'adresse sur les 4 formulaires (création/édition de
+  chantier, côté admin et client, + adresses de facturation). Sélectionner une suggestion
+  remplit automatiquement adresse + code postal + commune (champs restant éditables).
+- **Fournisseur** : **Base Adresse Nationale** (`https://api-adresse.data.gouv.fr/search/`),
+  API publique officielle, **sans clé**, CORS activé.
+- **Sécurité** :
+  - **Aucun secret, aucune clé** → rien à exposer côté `VITE_`. **Aucune dépendance npm**
+    ajoutée (`fetch` natif, composant `AddressAutocomplete` dans `ui.jsx`).
+  - **Endpoint tiers fixe** côté client : pas de SSRF (aucune URL contrôlée par
+    l'utilisateur ; le backend ne fait aucun appel sortant). La requête `q` est
+    `encodeURIComponent`-ée. La réponse n'est jamais injectée en HTML brut (React échappe).
+  - Schéma `https://` explicite assumé (endpoint tiers, jamais en mixed-content puisque
+    le front prod est servi en HTTPS).
+- **Fichiers** : `frontend/src/ui.jsx` (composants `AddressAutocomplete`, `Footer`,
+  hook `useIsMobile`), `frontend/src/admin.jsx`, `frontend/src/client.jsx`,
+  `frontend/src/theme.css` (refonte responsive : tableaux clients/chantiers en cartes
+  empilées sur mobile, référentiel d'étapes et grilles de formulaire empilés, barres
+  d'outils en wrap). Ajout du footer signature **OutiLab** sur toutes les pages.
+- **Build** : `npm run build` OK (35 modules). Bundle vérifié : API prod
+  (`//api-suividechantier.fbelec.fr`) + BAN présents, **aucun `localhost`**.
+
+## 8. Archivage des chantiers + édition/suppression d'étapes (2026-06-19)
+
+- **Archivage** : nouvelle colonne `fbelec.chantiers.archive boolean NOT NULL DEFAULT false`
+  (migration idempotente `db/migrations/2026-06-19_archive_chantiers.sql`). Distincte de
+  `actif` : `actif=FALSE` bloque tout accès client (inchangé), `archive=TRUE` retire le
+  chantier des listes « en cours » mais le laisse consultable dans la section « Archivés »
+  (admin ET client).
+  - **Anti-IDOR préservé** : la liste client archivés filtre toujours
+    `client_id = $1 AND actif = TRUE` ; le paramètre `?archived` n'est qu'un booléen
+    (`'1'/'true'`), aucune donnée utilisateur en SQL (requête paramétrée `$2`).
+  - Champ `archive` ajouté à la liste blanche du `PUT /admin/chantiers/:id` (merge partiel,
+    pas d'écrasement). Routes admin protégées par `authAdmin`.
+- **Étapes du référentiel** : `DELETE /admin/etapes/:id` passe d'un soft-delete à une
+  **suppression définitive transactionnelle** (purge des `chantier_etapes` liés, puis
+  `ref_etapes` ; `photos.etape_id` → SET NULL via FK). `POST`/`PUT` renvoient un **409**
+  lisible en cas de conflit d'ordre (index unique `ordre` sur étapes actives) au lieu d'un
+  500. Édition (label/sous_texte/ordre) via `PUT` existant. Routes admin uniquement.
+- **Fichiers** : `db/schema.sql`, `db/migrations/2026-06-19_archive_chantiers.sql` (nouveau),
+  `backend/src/routes/admin/chantiers.js`, `backend/src/routes/admin/etapes.js`,
+  `backend/src/routes/client/chantiers.js`, `frontend/src/ui.jsx`, `admin.jsx`, `client.jsx`.
+- **Validation** : `node --check` OK (3 fichiers backend) ; `npm run build` OK (35 modules).
+
+## 9. E-mail à chaque changement de statut + dates sur étapes (2026-06-19)
+
+- **E-mails** : un e-mail client est envoyé à **chaque avancement d'étape** (route
+  `PUT /admin/chantiers/:id/etapes`, comparaison de l'état avant/après, un mail par étape
+  réellement modifiée, envoi asynchrone via `sendEtapeAvancement`). Le changement de
+  **statut** (badge global) ne déclenche **pas** d'e-mail. Toujours derrière `authAdmin` ;
+  aucune donnée utilisateur en SQL (requêtes paramétrées) ; l'échec d'envoi n'impacte pas
+  la réponse HTTP (catch + log, pas de fuite).
+- **Dates d'étapes** : `ref_etapes.avec_date` (bool) + `chantier_etapes.date_valeur` (date)
+  — migration idempotente `db/migrations/2026-06-19_etapes_date.sql`. La date est saisie côté
+  admin (`PUT /admin/chantiers/:id/etapes/:etapeId`, colonnes en liste blanche
+  `masquee`/`date_valeur`, valeurs paramétrées) et lue côté client via
+  `to_char(date_valeur,'YYYY-MM-DD')` (évite les décalages de fuseau, pas d'objet Date sérialisé).
+  Affichage client filtré comme avant (`actif=TRUE AND masquee=FALSE`).
+- **Fichiers** : `db/schema.sql`, `db/migrations/2026-06-19_etapes_date.sql` (nouveau),
+  `backend/src/services/mailer.js`, `backend/src/routes/admin/chantiers.js`,
+  `backend/src/routes/admin/etapes.js`, `backend/src/routes/client/chantiers.js`,
+  `frontend/src/admin.jsx`, `frontend/src/client.jsx`.
+- **Validation** : `node --check` OK (4 fichiers) ; `npm run build` OK (35 modules) ;
+  rendu référentiel vérifié (preview) sans erreur.
+
+## 10. Badge dérivé de l'étape « En cours » + retrait du menu statut (2026-06-19)
+
+- Le badge affiché au client n'est plus basé sur la colonne `statut` mais **dérivé des
+  étapes** (l'étape `current` prime ; sinon bloquée / terminé / en préparation), via le helper
+  front `chantierBadge`. Les requêtes liste exposent `etape_courante` + `a_bloquee`
+  (sous-requêtes **statiques**, paramètres `client_id`/`archived` toujours paramétrés ;
+  filtre `masquee=FALSE` pour les vues client/vue-client). Le menu « Statut affiché au client »
+  (doublon) est retiré de la fiche admin. Colonne/filtre AdminList « Statut » → « Étape ».
+  La colonne DB `statut` est conservée (inutilisée à l'affichage, aucun impact sécurité).
+- **Fichiers** : `frontend/src/api.js`, `frontend/src/admin.jsx`, `frontend/src/client.jsx`,
+  `backend/src/routes/admin/chantiers.js`, `backend/src/routes/client/chantiers.js`,
+  `backend/src/routes/admin/vue_client.js`. `node --check` OK ; build OK ; rendu vérifié (preview).
+
+## 11. Champ obligatoire « Terrain viabilisé » (Oui/Non) à la création (2026-06-26)
+
+- Colonne `chantiers.terrain_viabilise boolean` **nullable** (migration idempotente
+  `db/migrations/2026-06-26_terrain_viabilise.sql`) — l'existant reste NULL, l'obligation est
+  imposée à la **création** (front : bloque l'étape suivante ; back : `typeof !== 'boolean'`
+  → 400). Stocké en **booléen** (pas de chaîne utilisateur), inséré en **requête paramétrée**.
+- Éditable via `PUT /admin/chantiers/:id` (liste blanche) et `PUT /client/chantiers/:id/infos`
+  (correctif au passage : `req.body[f] || null` → `=== '' ? null : value` pour **préserver
+  `false`**, qui devenait NULL). Affiché côté client dans « Informations du dossier ».
+- **Fichiers** : `db/schema.sql`, `db/migrations/2026-06-26_terrain_viabilise.sql` (nouveau),
+  `backend/src/routes/admin/chantiers.js`, `backend/src/routes/client/chantiers.js`,
+  `frontend/src/admin.jsx`, `frontend/src/client.jsx`. `node --check` OK ; build OK ; rendu vérifié.
+
+## 12. Fiche admin « Informations du dossier » + références client (2026-06-26)
+
+- **Fiche admin** : nouveau bloc « Informations du dossier » (client, adresse, puissance, durée,
+  date de début, facturation, terrain viabilisé, références) **au-dessus de l'Avancement**. Le
+  `GET /admin/chantiers/:id` fait désormais un **JOIN clients** (renvoie `client_nom`/`client_email`).
+- **Références optionnelles** (client crée pour l'un de ses clients) : colonnes
+  `chantiers.reference_client` + `reference_facturation` (text, migration
+  `2026-06-26_references.sql`). Champs **facultatifs** dans les formulaires de création
+  **client ET admin** (« Référence » sous Client / 1ᵉ champ + une « Référence » avant l'adresse
+  de facturation quand « différente »). Insertion en requête paramétrée
+  (`?.trim()||null`), éditables via les listes blanches PUT (client `/infos` + admin).
+- **Fichiers** : `db/schema.sql`, `db/migrations/2026-06-26_references.sql` (nouveau),
+  `backend/src/routes/admin/chantiers.js`, `backend/src/routes/client/chantiers.js`,
+  `frontend/src/admin.jsx`, `frontend/src/client.jsx`. `node --check` OK ; build OK ; formulaire
+  client vérifié en preview (2 champs Référence, bascule facturation, 0 erreur).
+
+## 14. Colonnes Société + recherche/filtres clients (2026-07-03)
+
+- **Chantiers suivis** : colonne **Société** (jointure `LEFT JOIN societes` via le client
+  propriétaire dans `GET /admin/chantiers` → `societe_nom`) + **tri par défaut sur la société**
+  (comptes sans société en dernier) + filtre Société. Vérifié en preview (tri correct,
+  0 débordement desktop/mobile).
+- **Gestion clients** : colonne **Société** (+ badge « Admin société »), **tri par défaut
+  société**, **barre de recherche** (nom/e-mail/téléphone/société) et **filtres** (par société,
+  dont « Sans société », et par rôle). Filtrage 100 % côté front sur les données déjà
+  chargées ; aucune donnée sensible supplémentaire exposée.
+- **Fichiers** : `backend/src/routes/admin/chantiers.js`, `frontend/src/admin.jsx`.
+
+## 13. Sociétés/rôles, téléchargement photos, type de courant, DnD étapes (2026-06-27)
+
+- **Sociétés + rôles** : table `fbelec.societes`, colonnes `clients.societe_id` (FK SET NULL)
+  et `clients.role_societe` ('basic'|'admin', **whitelist backend**, jamais de confiance au
+  front). Migration `2026-06-27_societes_type.sql`. Routes `GET/POST/PUT/DELETE /api/admin/societes`
+  (authAdmin ; PUT = renommage, nom validé/borné). **Page dédiée** `AdminSocietes`
+  (bouton « Sociétés » dans la barre de la liste chantiers) : création, renommage,
+  suppression, et changement de rôle des comptes rattachés (via `PUT /admin/clients/:id`,
+  whitelist inchangée). **Visibilité côté client (anti-IDOR étendu)** : helper `allowedClientIds()` dans
+  `client/chantiers.js` — un 'basic' n'accède qu'à ses chantiers ; un 'admin' de société accède
+  aux chantiers de tous les comptes de SA société (`client_id = ANY($ids)`, appliqué à
+  **toutes** les routes client : liste, détail, édition, uploads, suppressions). Les ids
+  proviennent du serveur (JWT → DB), jamais du client.
+- **Téléchargement des photos** (client + admin) : `downloadFile()` (`api.js`) — fetch + blob
+  (l'attribut download est ignoré en cross-origin), repli `window.open` noopener. Aucun
+  chemin utilisateur : on télécharge l'URL déjà servie par l'API.
+- **Connexion** : rechargement complet (`window.location.reload()`) après login → aucun état
+  résiduel en mémoire (sauf parcours « changer le mot de passe » conservé).
+- **Type de courant** : colonne `chantiers.puissance_type` ('monophase'|'triphase',
+  **whitelist backend**, obligatoire à la création admin + client). Références
+  `reference_client` désormais **obligatoire** (validée backend), placeholder « Société ou nom
+  du client » ; `reference_facturation` exigée par le front quand facturation différente.
+- **Étapes : réordonnancement par glisser-déposer** (+ flèches ▲▼ tactiles). Champ « ordre »
+  retiré de l'UI ; POST = fin de liste (MAX+10) ; `PUT /etapes/reorder` validé (ids/ordres
+  entiers) et en **2 passes** transactionnelles (contourne l'index unique sur `ordre`).
+- **CSS mobile** : audit mesuré à 375px (login, dashboard, formulaires, guide, admin list/
+  clients/étapes + modales) → 0 débordement ; règle `div[style*="max-width"]{max-width:100%}`
+  ≤640px pour des largeurs de champs uniformes.
+- **Fichiers** : `db/schema.sql`, `db/migrations/2026-06-27_societes_type.sql` (nouveau),
+  `backend/src/routes/admin/{societes.js (nouveau), clients.js, chantiers.js, etapes.js, index.js}`,
+  `backend/src/routes/client/chantiers.js`, `frontend/src/{api.js, ui.jsx, admin.jsx, client.jsx, theme.css}`.
+  `node --check` OK (6 fichiers) ; build OK ; parcours vérifiés en preview.
+
