@@ -250,6 +250,35 @@ open redirect (navigation interne, `?chantier=` casté en entier), secrets front
   `frontend/src/admin.jsx`, `frontend/src/client.jsx`. `node --check` OK ; build OK ; formulaire
   client vérifié en preview (2 champs Référence, bascule facturation, 0 erreur).
 
+## 15. Mandat EDF PDF, contact facturation, deps (2026-07-21)
+
+- **Génération du mandat EDF prérempli** : service `backend/src/services/mandat.js` (pdf-lib,
+  dessin par coordonnées sur `backend/assets/mandat-vierge.pdf`) — référence mandant,
+  F.B ELEC mandataire, 8 droits RGPD cochés, souscription/résiliation (élec + branchement
+  provisoire) avec adresse du chantier, fait à/le/1 exemplaire, tampon+paraphe
+  `backend/assets/signature-fbelec.png` sous « Signature du mandataire » (mandant vide).
+  Routes `POST /api/client/mandat` (authClient) et `POST /api/admin/chantiers/mandat`
+  (authAdmin), **entrées validées** (str required/bornées), réponse PDF en attachment.
+  - **Enregistrement automatique** : à la création d'un chantier (admin + client), le mandat
+    est généré et ajouté aux **documents du chantier** (`genererMandatFichier` : chantierId
+    forcé entier positif, schéma whitelisté `[a-z0-9_]` — mêmes gardes anti-traversal que
+    les uploads ; nommage aléatoire ; catégorie 'mandat', statut 'attente', visible client).
+    Échec non bloquant (la création aboutit, erreur logguée).
+  - ⚠️ **`backend/assets/` est dans `.gitignore`** (la signature scannée ne doit pas aller
+    sur GitHub) → à **scp manuellement** vers chaque serveur, comme le `.env`.
+  - **Nouvelle dépendance : `pdf-lib` ^1.17** (pur JS, maintenu, sans binaire natif — OK
+    Passenger). Front : helper `downloadPdf()` (fetch POST + blob, token en header).
+- **Contact de facturation** : colonnes `chantiers.facturation_telephone/facturation_email`
+  (facultatives, migration `2026-07-21_facturation_contact.sql`), formulaires (si facturation
+  « différente », réf préremplie depuis la référence client, modifiable), whitelists PUT,
+  affichages. **Mandat retiré des documents obligatoires** (front, `CAT_REQUIRED`).
+- **Dépendances corrigées** (npm audit) : `body-parser` ≥1.20.6 (DoS, low) et
+  **`nodemailer` ^9.0.3** (high : contournement disableFileAccess via option `raw` — non
+  utilisée chez nous ; API createTransport/sendMail inchangée). `npm audit` → **0 vulnérabilité**.
+  - ⚠️ Piège Drive : npm install sur H: **tronque des fichiers** (package.json à 0 octet) →
+    modules réparés par install locale (C:) puis copie. Dossiers `*.broken` laissés dans
+    node_modules (inertes). Sur les serveurs, `npm install` normal (pas de Drive).
+
 ## 14. Colonnes Société + recherche/filtres clients (2026-07-03)
 
 - **Chantiers suivis** : colonne **Société** (jointure `LEFT JOIN societes` via le client

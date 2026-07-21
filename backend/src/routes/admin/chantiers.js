@@ -3,8 +3,23 @@ import fs from 'fs';
 import { pool } from '../../db.js';
 import { toPublicUrl } from '../../middleware/upload.js';
 import { sendEtapeAvancement } from '../../services/mailer.js';
+import { genererMandat, genererMandatFichier } from '../../services/mandat.js';
+import { str } from '../../utils/validate.js';
 
 const router = Router();
+
+// POST /api/admin/chantiers/mandat — mandat EDF prérempli (PDF)
+router.post('/mandat', async (req, res, next) => {
+  try {
+    const reference = str(req.body.reference, { required: true, max: 200, label: 'Référence' });
+    const adresse = str(req.body.adresse, { required: true, max: 300, label: 'Adresse' });
+    const ville = str(req.body.ville, { required: true, max: 100, label: 'Ville' });
+    const pdf = await genererMandat({ reference, adresse, ville });
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', 'attachment; filename="mandat-edf.pdf"');
+    res.send(pdf);
+  } catch (err) { next(err); }
+});
 
 // Libellés des états d'étape (miroir du front).
 const ETAT_LABELS = {
@@ -83,6 +98,7 @@ router.post('/', async (req, res, next) => {
       client_id, nom, adresse, commune, code_postal, type_prestation,
       adresse_facturation, puissance_demandee, date_debut_chantier, duree_chantier, terrain_viabilise,
       reference_client, reference_facturation, puissance_type,
+      facturation_telephone, facturation_email,
       statut, resume, prochaine_action, prochaine_action_qui, prochaine_action_date,
       action_requise_titre, action_requise_texte, action_requise_cta, derniere_maj,
       enedis_ref_affaire, enedis_delivery_id, enedis_contrat, enedis_pdl,
@@ -110,8 +126,8 @@ router.post('/', async (req, res, next) => {
           enedis_ref_affaire,enedis_delivery_id,enedis_contrat,enedis_pdl,
           enedis_type_prestation,enedis_delivery_status,enedis_date_demande,
           enedis_date_etude,enedis_date_travaux,enedis_lat,enedis_lng,enedis_point_arret,terrain_viabilise,
-          reference_client,reference_facturation,puissance_type)
-       VALUES ($1,'TMP',$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35)
+          reference_client,reference_facturation,puissance_type,facturation_telephone,facturation_email)
+       VALUES ($1,'TMP',$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37)
        RETURNING *`,
       [client_id,chantierNom,adresse,commune,code_postal||null,type_prestation||null,
        adresse_facturation||null,puissance_demandee||null,date_debut_chantier||null,duree_chantier||null,
@@ -120,7 +136,8 @@ router.post('/', async (req, res, next) => {
        enedis_ref_affaire||null,enedis_delivery_id||null,enedis_contrat||null,enedis_pdl||null,
        enedis_type_prestation||null,enedis_delivery_status||null,enedis_date_demande||null,
        enedis_date_etude||null,enedis_date_travaux||null,enedis_lat||null,enedis_lng||null,enedis_point_arret||null,
-       terrain_viabilise,reference_client.trim(),reference_facturation?.trim()||null,puissance_type]
+       terrain_viabilise,reference_client.trim(),reference_facturation?.trim()||null,puissance_type,
+       facturation_telephone?.trim()||null,facturation_email?.trim()||null]
     );
 
     // Référence fournie par l'admin ou générée automatiquement
@@ -131,6 +148,23 @@ router.post('/', async (req, res, next) => {
     await dbClient.query('UPDATE fbelec.chantiers SET reference = $1 WHERE id = $2', [reference, chantier.id]);
     await dbClient.query('SELECT fbelec.init_etapes($1)', [chantier.id]);
     await dbClient.query('COMMIT');
+
+    // Mandat EDF prérempli, enregistré parmi les documents du chantier
+    // (échec non bloquant : la création reste valide).
+    try {
+      const fichier = await genererMandatFichier({
+        chantierId: chantier.id, schema: req.schema,
+        reference: reference_client.trim(),
+        adresse: [adresse, code_postal, commune].filter(Boolean).join(', '),
+        ville: commune,
+      });
+      await pool.query(
+        `INSERT INTO fbelec.documents (chantier_id, nom, type_fichier, url, categorie, statut, visible_client)
+         VALUES ($1, 'Mandat', 'PDF', $2, 'mandat', 'attente', TRUE)`,
+        [chantier.id, fichier]
+      );
+    } catch (e) { console.error('[mandat] génération auto:', e.message); }
+
     res.status(201).json({ ...chantier, reference, nom: chantierNom });
   } catch (err) {
     await dbClient.query('ROLLBACK');
@@ -150,6 +184,7 @@ router.put('/:id', async (req, res, next) => {
       'enedis_type_prestation','enedis_delivery_status','enedis_date_demande',
       'enedis_date_etude','enedis_date_travaux','enedis_lat','enedis_lng','enedis_point_arret','actif','archive','terrain_viabilise',
       'reference_client','reference_facturation','puissance_type',
+      'facturation_telephone','facturation_email',
     ];
     const fields = allowed.filter(f => req.body[f] !== undefined);
     if (!fields.length) return res.status(400).json({ error: 'Aucun champ à modifier.' });

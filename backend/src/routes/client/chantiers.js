@@ -6,6 +6,7 @@ import authClient from '../../middleware/authClient.js';
 import { toPublicUrl, uploadDoc, uploadPhotos } from '../../middleware/upload.js';
 import { str } from '../../utils/validate.js';
 import { sendContactClient, sendNouveauChantierAdmin } from '../../services/mailer.js';
+import { genererMandat, genererMandatFichier } from '../../services/mandat.js';
 
 const router = Router();
 router.use(authClient);
@@ -131,7 +132,8 @@ router.post('/chantiers', async (req, res, next) => {
   try {
     const { adresse, commune, code_postal, adresse_facturation, puissance_demandee,
             date_debut_chantier, duree_chantier, terrain_viabilise,
-            reference_client, reference_facturation, puissance_type } = req.body;
+            reference_client, reference_facturation, puissance_type,
+            facturation_telephone, facturation_email } = req.body;
 
     if (!adresse?.trim() || !commune?.trim() || !adresse_facturation?.trim()
         || !puissance_demandee?.trim() || !date_debut_chantier || !duree_chantier?.trim()) {
@@ -161,13 +163,15 @@ router.post('/chantiers', async (req, res, next) => {
            (client_id, reference, nom, adresse, commune, code_postal,
             adresse_facturation, puissance_demandee, date_debut_chantier,
             duree_chantier, statut, cree_par_client, terrain_viabilise,
-            reference_client, reference_facturation, puissance_type)
-         VALUES ($1,'TMP',$2,$3,$4,$5,$6,$7,$8,$9,'prepa',TRUE,$10,$11,$12,$13) RETURNING *`,
+            reference_client, reference_facturation, puissance_type,
+            facturation_telephone, facturation_email)
+         VALUES ($1,'TMP',$2,$3,$4,$5,$6,$7,$8,$9,'prepa',TRUE,$10,$11,$12,$13,$14,$15) RETURNING *`,
         [req.clientId, nom,
          adresse.trim(), commune.trim(), code_postal?.trim()||null,
          adresse_facturation.trim(), puissance_demandee.trim(),
          date_debut_chantier, duree_chantier.trim(), terrain_viabilise,
-         reference_client.trim(), reference_facturation?.trim()||null, puissance_type]
+         reference_client.trim(), reference_facturation?.trim()||null, puissance_type,
+         facturation_telephone?.trim()||null, facturation_email?.trim()||null]
       );
 
       // Construire la référence : DEP-VIL-NOM-ID
@@ -183,6 +187,22 @@ router.post('/chantiers', async (req, res, next) => {
       await dbClient.query('SELECT fbelec.init_etapes($1)', [chantier.id]);
 
       await dbClient.query('COMMIT');
+
+      // Mandat EDF prérempli, enregistré parmi les documents du chantier
+      // (échec non bloquant : la création reste valide).
+      try {
+        const fichier = await genererMandatFichier({
+          chantierId: chantier.id, schema: req.schema,
+          reference: reference_client.trim(),
+          adresse: [adresse.trim(), code_postal?.trim(), commune.trim()].filter(Boolean).join(', '),
+          ville: commune.trim(),
+        });
+        await pool.query(
+          `INSERT INTO fbelec.documents (chantier_id, nom, type_fichier, url, categorie, statut, visible_client)
+           VALUES ($1, 'Mandat', 'PDF', $2, 'mandat', 'attente', TRUE)`,
+          [chantier.id, fichier]
+        );
+      } catch (e) { console.error('[mandat] génération auto:', e.message); }
 
       sendNouveauChantierAdmin({
         clientNom: clientInfo.nom, clientEmail: clientInfo.email,
@@ -204,7 +224,8 @@ router.put('/chantiers/:id/infos', async (req, res, next) => {
     const chantierId = parseInt(req.params.id);
     const allowed = ['adresse','commune','code_postal','adresse_facturation',
                      'puissance_demandee','date_debut_chantier','duree_chantier','terrain_viabilise',
-                     'reference_client','reference_facturation','puissance_type'];
+                     'reference_client','reference_facturation','puissance_type',
+                     'facturation_telephone','facturation_email'];
     const fields = allowed.filter(f => req.body[f] !== undefined && req.body[f] !== null);
     if (!fields.length) return res.status(400).json({ error: 'Aucun champ à modifier.' });
 
@@ -309,6 +330,19 @@ router.delete('/chantiers/:id/photos/:photoId', async (req, res, next) => {
 
     if (photo.url && fs.existsSync(photo.url)) { try { fs.unlinkSync(photo.url); } catch {} }
     res.json({ ok: true });
+  } catch (err) { next(err); }
+});
+
+// POST /api/client/mandat — mandat EDF prérempli (PDF) pour la création de chantier
+router.post('/mandat', async (req, res, next) => {
+  try {
+    const reference = str(req.body.reference, { required: true, max: 200, label: 'Référence' });
+    const adresse = str(req.body.adresse, { required: true, max: 300, label: 'Adresse' });
+    const ville = str(req.body.ville, { required: true, max: 100, label: 'Ville' });
+    const pdf = await genererMandat({ reference, adresse, ville });
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', 'attachment; filename="mandat-edf.pdf"');
+    res.send(pdf);
   } catch (err) { next(err); }
 });
 

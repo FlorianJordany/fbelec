@@ -42,6 +42,33 @@ export async function downloadFile(url, filename) {
   }
 }
 
+// ── Génération + téléchargement d'un PDF via l'API (authentifié) ─
+export async function downloadPdf(path, body, filename) {
+  const token = localStorage.getItem('fb_token');
+  const r = await fetch(API_BASE + path, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token ? { 'Authorization': 'Bearer ' + token } : {}),
+    },
+    body: JSON.stringify(body),
+  });
+  if (!r.ok) {
+    let msg = 'Erreur serveur';
+    try { msg = (await r.json()).error || msg; } catch {}
+    throw new Error(msg);
+  }
+  const blob = await r.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename || 'document.pdf';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 2000);
+}
+
 // ── Constantes de statut (UI uniquement, pas de logique métier) ──
 export const STATUS_META = {
   prepa:       { label:"Dossier en préparation",    kind:"neutral" },
@@ -87,7 +114,7 @@ export const CAT_LABELS = {
   plan_masse:        'Plan de masse',
   mandat:            'Mandat',
 };
-export const CAT_REQUIRED = ['permis_construire','plan_situation','mandat'];
+export const CAT_REQUIRED = ['permis_construire','plan_situation'];
 
 export const DOC_OPTIONS = [
   ...Object.entries(CAT_LABELS).map(([k,v])=>({value:k,label:v})),

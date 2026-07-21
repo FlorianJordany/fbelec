@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { apiFetch, chantierBadge, downloadFile, CAT_LABELS, DOC_OPTIONS } from './api.js';
+import { apiFetch, chantierBadge, downloadFile, downloadPdf, CAT_LABELS, DOC_OPTIONS } from './api.js';
 import { Icon, Btn, StatusPill, Card, Field, SectionTitle, Toast, useToast,
          ColFilter, SearchableSelect, Modal, AppHeader, AddressAutocomplete, Footer } from './ui.jsx';
 
@@ -216,6 +216,9 @@ export function AdminNouveauChantier({ go, openChantier, onLogout, isAdmin }) {
   const [factCp,setFactCp]=useState('');
   const [factCommune,setFactCommune]=useState('');
   const [factReference,setFactReference]=useState('');
+  const [factTelephone,setFactTelephone]=useState('');
+  const [factEmail,setFactEmail]=useState('');
+  const [mandatLoading,setMandatLoading]=useState(false);
   const [dureeMontant,setDureeMontant]=useState('');
   const [dureeUnite,setDureeUnite]=useState('semaines');
   const [docs,setDocs]=useState({permis_construire:null,plan_situation:null,plan_masse:null,mandat:null});
@@ -250,6 +253,8 @@ export function AdminNouveauChantier({ go, openChantier, onLogout, isAdmin }) {
         adresse_facturation:adresseFact, duree_chantier:dureeFinal,
         terrain_viabilise: form.terrain_viabilise==='oui',
         reference_facturation: factType==='differente'?factReference:'',
+        facturation_telephone: factType==='differente'?factTelephone:'',
+        facturation_email: factType==='differente'?factEmail:'',
       }});
       for (const [cat,file] of Object.entries(docs)) {
         if (!file) continue;
@@ -349,16 +354,32 @@ export function AdminNouveauChantier({ go, openChantier, onLogout, isAdmin }) {
           </div>
           <div>
             <label style={labelSt}>Adresse de facturation *</label>
-            <select style={inputSt} value={factType} onChange={e=>setFactType(e.target.value)}>
+            <select style={inputSt} value={factType}
+              onChange={e=>{ const v=e.target.value; setFactType(v);
+                if(v==='differente'&&!factReference)setFactReference(form.reference_client); }}>
               <option value="identique">Identique à l'adresse du chantier</option>
               <option value="differente">Différente</option>
             </select>
           </div>
-          {factType==='differente'&&<div>
-            <label style={labelSt}>Référence *</label>
-            <input style={inputSt} value={factReference} onChange={e=>setFactReference(e.target.value)}
-              placeholder="Société ou nom du client"/>
-          </div>}
+          {factType==='differente'&&<>
+            <div>
+              <label style={labelSt}>Référence *</label>
+              <input style={inputSt} value={factReference} onChange={e=>setFactReference(e.target.value)}
+                placeholder="Société ou nom du client"/>
+            </div>
+            <div className="fb-form2" style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:14}}>
+              <div>
+                <label style={labelSt}>Téléphone <span style={{color:'var(--muted)',fontWeight:400}}>(optionnel)</span></label>
+                <input style={inputSt} value={factTelephone} onChange={e=>setFactTelephone(e.target.value)}
+                  placeholder="06 XX XX XX XX"/>
+              </div>
+              <div>
+                <label style={labelSt}>Mail <span style={{color:'var(--muted)',fontWeight:400}}>(optionnel)</span></label>
+                <input style={inputSt} type="email" value={factEmail} onChange={e=>setFactEmail(e.target.value)}
+                  placeholder="facturation@exemple.fr"/>
+              </div>
+            </div>
+          </>}
           <div>
             <label style={labelSt}>Adresse</label>
             {factType==='identique'
@@ -508,6 +529,28 @@ export function AdminNouveauChantier({ go, openChantier, onLogout, isAdmin }) {
             <span style={{fontSize:14,color:'var(--ink)'}}>{photos.length} photo(s)</span>
           </div>}
         </div>
+        {/* Mandat EDF prérempli */}
+        <div style={{borderTop:'1px solid var(--line)',paddingTop:16,marginBottom:16}}>
+          <div style={{display:'flex',alignItems:'center',gap:12,flexWrap:'wrap'}}>
+            <div style={{flex:1,minWidth:220}}>
+              <div style={{fontFamily:'var(--font-head)',fontWeight:700,fontSize:14.5,color:'var(--ink)'}}>Mandat EDF</div>
+              <div style={{fontSize:13,color:'var(--slate)',lineHeight:1.5}}>
+                Téléchargez le mandat prérempli avec les informations du chantier.
+              </div>
+            </div>
+            <Btn variant="ghost" icon="download" loading={mandatLoading} onClick={async()=>{
+              setMandatLoading(true);
+              try {
+                await downloadPdf('/api/admin/chantiers/mandat',{
+                  reference: form.reference_client,
+                  adresse: [form.adresse, form.code_postal, form.commune].filter(Boolean).join(', '),
+                  ville: form.commune,
+                }, `Mandat-EDF-${(form.reference_client||'chantier').replace(/[^\w-]+/g,'_')}.pdf`);
+              } catch(e){ setErr(e.message); }
+              finally{ setMandatLoading(false); }
+            }}>Télécharger le mandat (PDF)</Btn>
+          </div>
+        </div>
         {err&&<p style={{margin:'0 0 12px',color:'var(--c-blocked)',fontSize:14}}>{err}</p>}
         <div style={{display:'flex',gap:12,justifyContent:'flex-end'}}>
           <Btn variant="ghost" onClick={()=>setStep(2)}>Retour</Btn>
@@ -574,7 +617,7 @@ export function AdminList({ go, openChantier, onLogout, isAdmin }) {
 
   const visible = chantiers.filter(c=>{
     if (filtres.nom && c.reference_client!==filtres.nom) return false;
-    if (filtres.client && c.client_nom!==filtres.client) return false;
+    if (filtres.client && (c.societe_nom||'—')!==filtres.client) return false;
     if (filtres.statut && (c.etape_courante||'—')!==filtres.statut) return false;
     return true;
   }).sort((a,b)=>{
@@ -620,8 +663,8 @@ export function AdminList({ go, openChantier, onLogout, isAdmin }) {
           <ColFilter label="Chantier"
             allValues={chantiers.map(c=>c.reference_client)}
             value={filtres.nom} onChange={v=>setF("nom",v)}/>
-          <ColFilter label="Client"
-            allValues={chantiers.map(c=>c.client_nom)}
+          <ColFilter label="Société"
+            allValues={chantiers.map(c=>c.societe_nom||'—')}
             value={filtres.client} onChange={v=>setF("client",v)}/>
           <span style={{fontFamily:"var(--font-head)",fontWeight:700,fontSize:11.5,textTransform:"uppercase",
             letterSpacing:".05em",color:"var(--muted)"}}>Avancement</span>
@@ -663,8 +706,9 @@ export function AdminList({ go, openChantier, onLogout, isAdmin }) {
                 </div>
               </div>
             </span>
-            {/* Client */}
-            <span style={{fontSize:13,color:"var(--slate)",fontWeight:500}}>{c.client_nom}</span>
+            {/* Société */}
+            <span style={{fontSize:13,color:c.societe_nom?"var(--ink)":"var(--muted)",fontWeight:c.societe_nom?600:400,
+              overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{c.societe_nom||"—"}</span>
             {/* Avancement */}
             <span>
               <div style={{display:"flex",alignItems:"center",gap:7}}>
@@ -865,6 +909,8 @@ export function AdminChantier({ chantierId, go, onLogout, isAdmin }) {
               ["Adresse du chantier", [c.adresse, c.code_postal, c.commune].filter(Boolean).join(', ')],
               ["Adresse de facturation", c.adresse_facturation],
               ["Référence facturation", c.reference_facturation],
+              ["Téléphone facturation", c.facturation_telephone],
+              ["Mail facturation", c.facturation_email],
               ["Puissance demandée", c.puissance_demandee],
               ["Type", c.puissance_type==='monophase'?'Monophasé':c.puissance_type==='triphase'?'Triphasé':null],
               ["Durée prévisionnelle", c.duree_chantier],

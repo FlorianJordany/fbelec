@@ -121,6 +121,8 @@ CREATE TABLE fbelec.chantiers (
   terrain_viabilise      boolean,
   reference_client       text,
   reference_facturation  text,
+  facturation_telephone  text,
+  facturation_email      text,
   cree_par_client        boolean DEFAULT false NOT NULL
 );
 CREATE INDEX chantiers_client_id_idx ON fbelec.chantiers (client_id);
