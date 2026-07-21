@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { apiFetch, API_BASE, chantierBadge, downloadFile, CAT_LABELS, CAT_REQUIRED, DOC_OPTIONS } from './api.js';
+import { apiFetch, API_BASE, chantierBadge, downloadFile, downloadPdf, CAT_LABELS, CAT_REQUIRED, DOC_OPTIONS } from './api.js';
 import { Icon, Logo, Btn, StatusPill, Card, Field, SectionTitle, Toast, useToast, AppHeader,
          AddressAutocomplete, Footer } from './ui.jsx';
 
@@ -555,6 +555,8 @@ export function ChantierDetail({ chantierId, go, onLogout, isAdmin, backTo, apiB
               ["Référence",c.reference_client],
               ["Adresse facturation",c.adresse_facturation],
               ["Référence facturation",c.reference_facturation],
+              ["Téléphone facturation",c.facturation_telephone],
+              ["Mail facturation",c.facturation_email],
               ["Puissance demandée",c.puissance_demandee],
               ["Type",c.puissance_type==='monophase'?'Monophasé':c.puissance_type==='triphase'?'Triphasé':null],
               ["Terrain viabilisé",c.terrain_viabilise===true?"Oui":c.terrain_viabilise===false?"Non":null],
@@ -1147,6 +1149,9 @@ export function NouveauChantierClient({ go, onLogout, isAdmin }) {
   const [factCp,setFactCp]=useState('');
   const [factCommune,setFactCommune]=useState('');
   const [factReference,setFactReference]=useState('');
+  const [factTelephone,setFactTelephone]=useState('');
+  const [factEmail,setFactEmail]=useState('');
+  const [mandatLoading,setMandatLoading]=useState(false);
   const [dureeMontant,setDureeMontant]=useState('');
   const [dureeUnite,setDureeUnite]=useState('semaines');
   const [docs,setDocs]=useState({permis_construire:null,plan_situation:null,plan_masse:null,mandat:null});
@@ -1176,7 +1181,9 @@ export function NouveauChantierClient({ go, onLogout, isAdmin }) {
       const chantier=await apiFetch('/api/client/chantiers',{method:'POST',body:{
         ...form, adresse_facturation:adresseFact, duree_chantier:dureeFinal,
         terrain_viabilise: form.terrain_viabilise==='oui',
-        reference_facturation: factType==='differente'?factReference:''
+        reference_facturation: factType==='differente'?factReference:'',
+        facturation_telephone: factType==='differente'?factTelephone:'',
+        facturation_email: factType==='differente'?factEmail:''
       }});
       // Upload docs
       for (const [cat,file] of Object.entries(docs)) {
@@ -1274,16 +1281,32 @@ export function NouveauChantierClient({ go, onLogout, isAdmin }) {
           </div>
           <div>
             <label style={labelSt}>Adresse de facturation *</label>
-            <select style={inputSt} value={factType} onChange={e=>setFactType(e.target.value)}>
+            <select style={inputSt} value={factType}
+              onChange={e=>{ const v=e.target.value; setFactType(v);
+                if(v==='differente'&&!factReference)setFactReference(form.reference_client); }}>
               <option value="identique">Identique à l'adresse du chantier</option>
               <option value="differente">Différente</option>
             </select>
           </div>
-          {factType==='differente'&&<div>
-            <label style={labelSt}>Référence *</label>
-            <input style={inputSt} value={factReference} onChange={e=>setFactReference(e.target.value)}
-              placeholder="Société ou nom du client"/>
-          </div>}
+          {factType==='differente'&&<>
+            <div>
+              <label style={labelSt}>Référence *</label>
+              <input style={inputSt} value={factReference} onChange={e=>setFactReference(e.target.value)}
+                placeholder="Société ou nom du client"/>
+            </div>
+            <div className="fb-form2" style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:14}}>
+              <div>
+                <label style={labelSt}>Téléphone <span style={{color:'var(--muted)',fontWeight:400}}>(optionnel)</span></label>
+                <input style={inputSt} value={factTelephone} onChange={e=>setFactTelephone(e.target.value)}
+                  placeholder="06 XX XX XX XX"/>
+              </div>
+              <div>
+                <label style={labelSt}>Mail <span style={{color:'var(--muted)',fontWeight:400}}>(optionnel)</span></label>
+                <input style={inputSt} type="email" value={factEmail} onChange={e=>setFactEmail(e.target.value)}
+                  placeholder="facturation@exemple.fr"/>
+              </div>
+            </div>
+          </>}
           <div>
             <label style={labelSt}>Adresse</label>
             {factType==='identique'
@@ -1443,6 +1466,28 @@ export function NouveauChantierClient({ go, onLogout, isAdmin }) {
             <Icon name="camera" size={16} style={{color:'var(--slate)'}}/>
             <span style={{fontSize:14,color:'var(--ink)'}}>{photos.length} photo(s)</span>
           </div>}
+        </div>
+        {/* Mandat EDF prérempli */}
+        <div style={{borderTop:'1px solid var(--line)',paddingTop:16,marginBottom:16}}>
+          <div style={{display:'flex',alignItems:'center',gap:12,flexWrap:'wrap'}}>
+            <div style={{flex:1,minWidth:220}}>
+              <div style={{fontFamily:'var(--font-head)',fontWeight:700,fontSize:14.5,color:'var(--ink)'}}>Mandat EDF</div>
+              <div style={{fontSize:13,color:'var(--slate)',lineHeight:1.5}}>
+                Téléchargez le mandat prérempli avec vos informations, à faire signer par votre client.
+              </div>
+            </div>
+            <Btn variant="ghost" icon="download" loading={mandatLoading} onClick={async()=>{
+              setMandatLoading(true);
+              try {
+                await downloadPdf('/api/client/mandat',{
+                  reference: form.reference_client,
+                  adresse: [form.adresse, form.code_postal, form.commune].filter(Boolean).join(', '),
+                  ville: form.commune,
+                }, `Mandat-EDF-${(form.reference_client||'chantier').replace(/[^\w-]+/g,'_')}.pdf`);
+              } catch(e){ setErr(e.message); }
+              finally{ setMandatLoading(false); }
+            }}>Télécharger le mandat (PDF)</Btn>
+          </div>
         </div>
         <p style={{fontSize:14,color:'var(--slate)',margin:'14px 0 18px',lineHeight:1.55}}>
           En validant, votre demande sera transmise à l'équipe FB ELEC qui vous contactera sous 48h.
