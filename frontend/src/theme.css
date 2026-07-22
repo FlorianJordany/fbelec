@@ -21,7 +21,9 @@ input,select,textarea,button{font-family:inherit}
 /* Les contrôles peuvent rétrécir sous la largeur de leur contenu (anti-débordement mobile) */
 input,select,textarea{min-width:0;max-width:100%}
 ::selection{background:var(--jaune);color:#1a1a1a}
-.fb-wrap{max-width:1200px;margin:0 auto;padding-left:24px;padding-right:24px}
+/* width:100% requis : dans une racine flex column (sticky footer), un enfant à
+   marges auto ne s'étire plus et se réduirait à la largeur de son contenu. */
+.fb-wrap{width:100%;max-width:1200px;margin:0 auto;padding-left:24px;padding-right:24px}
 .fb-img{background:var(--bg-soft)}
 .fb-img.fb-broken{background-image:repeating-linear-gradient(45deg,#e7e9ec,#e7e9ec 9px,#eef0f2 9px,#eef0f2 18px)!important;position:relative}
 .fb-img.fb-broken::after{content:"photo";position:absolute;inset:0;display:grid;place-items:center;font-family:var(--font-mono);font-size:11px;color:#9aa2ab}

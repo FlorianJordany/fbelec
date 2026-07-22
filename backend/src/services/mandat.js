@@ -27,7 +27,7 @@ const P2 = {
   faitA: { x: 92, y: 227 },
   le:    { x: 80, y: 215 },
   exemplaires: { x: 73, y: 204 },
-  signature: { x: 337, y: 96, w: 150 },        // sous « Signature du mandataire »
+  signature: { x: 118, y: 96, w: 150 },        // sous « Signature du mandant »
 };
 
 // Réduit la taille de police pour tenir dans maxW (jamais < 7pt).

@@ -1183,7 +1183,8 @@ export function NouveauChantierClient({ go, onLogout, isAdmin }) {
         terrain_viabilise: form.terrain_viabilise==='oui',
         reference_facturation: factType==='differente'?factReference:'',
         facturation_telephone: factType==='differente'?factTelephone:'',
-        facturation_email: factType==='differente'?factEmail:''
+        facturation_email: factType==='differente'?factEmail:'',
+        mandat_fourni: !!docs.mandat
       }});
       // Upload docs
       for (const [cat,file] of Object.entries(docs)) {
@@ -1395,7 +1396,9 @@ export function NouveauChantierClient({ go, onLogout, isAdmin }) {
                   {lbl}{req&&<span style={{color:'var(--c-blocked)',marginLeft:4}}>*</span>}
                 </div>
                 <div style={{fontSize:12.5,color:'var(--muted)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
-                  {file?file.name:'Aucun fichier sélectionné'}
+                  {file?file.name
+                    :cat==='mandat'?'Généré automatiquement si absent'
+                    :'Aucun fichier sélectionné'}
                 </div>
               </div>
               <label style={{cursor:'pointer',padding:'8px 14px',border:'1px solid var(--line)',borderRadius:'var(--r-input)',
@@ -1467,8 +1470,8 @@ export function NouveauChantierClient({ go, onLogout, isAdmin }) {
             <span style={{fontSize:14,color:'var(--ink)'}}>{photos.length} photo(s)</span>
           </div>}
         </div>
-        {/* Mandat EDF prérempli */}
-        <div style={{borderTop:'1px solid var(--line)',paddingTop:16,marginBottom:16}}>
+        {/* Mandat EDF prérempli — masqué si un mandat a été fourni à l'étape Documents */}
+        {!docs.mandat&&<div style={{borderTop:'1px solid var(--line)',paddingTop:16,marginBottom:16}}>
           <div style={{display:'flex',alignItems:'center',gap:12,flexWrap:'wrap'}}>
             <div style={{flex:1,minWidth:220}}>
               <div style={{fontFamily:'var(--font-head)',fontWeight:700,fontSize:14.5,color:'var(--ink)'}}>Mandat EDF</div>
@@ -1488,7 +1491,7 @@ export function NouveauChantierClient({ go, onLogout, isAdmin }) {
               finally{ setMandatLoading(false); }
             }}>Télécharger le mandat (PDF)</Btn>
           </div>
-        </div>
+        </div>}
         <p style={{fontSize:14,color:'var(--slate)',margin:'14px 0 18px',lineHeight:1.55}}>
           En validant, votre demande sera transmise à l'équipe FB ELEC qui vous contactera sous 48h.
         </p>

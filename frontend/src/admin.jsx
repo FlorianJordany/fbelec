@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { apiFetch, chantierBadge, downloadFile, downloadPdf, CAT_LABELS, DOC_OPTIONS } from './api.js';
+import { apiFetch, chantierBadge, downloadFile, downloadPdf, CAT_LABELS, CAT_REQUIRED, DOC_OPTIONS } from './api.js';
 import { Icon, Btn, StatusPill, Card, Field, SectionTitle, Toast, useToast,
          ColFilter, SearchableSelect, Modal, AppHeader, AddressAutocomplete, Footer } from './ui.jsx';
 
@@ -244,6 +244,7 @@ export function AdminNouveauChantier({ go, openChantier, onLogout, isAdmin }) {
   const canStep2 = form.client_id&&form.adresse&&form.commune&&form.puissance_demandee&&form.puissance_type
     &&form.date_debut_chantier&&dureeMontant&&form.terrain_viabilise&&form.reference_client.trim()
     &&(factType==='identique'||(factAdresse&&factCommune&&factReference.trim()));
+  const canStep3 = CAT_REQUIRED.every(k=>docs[k]);
 
   async function submit() {
     setErr(''); setLoading(true);
@@ -255,6 +256,7 @@ export function AdminNouveauChantier({ go, openChantier, onLogout, isAdmin }) {
         reference_facturation: factType==='differente'?factReference:'',
         facturation_telephone: factType==='differente'?factTelephone:'',
         facturation_email: factType==='differente'?factEmail:'',
+        mandat_fourni: !!docs.mandat,
       }});
       for (const [cat,file] of Object.entries(docs)) {
         if (!file) continue;
@@ -447,6 +449,7 @@ export function AdminNouveauChantier({ go, openChantier, onLogout, isAdmin }) {
         <div style={{display:'grid',gap:14}}>
           {Object.entries(CAT_LABELS).map(([cat,lbl])=>{
             const file=docs[cat];
+            const req=CAT_REQUIRED.includes(cat);
             return <div key={cat} style={{display:'flex',alignItems:'center',gap:12,padding:'14px 16px',
               background:file?'color-mix(in srgb,var(--c-done) 8%,#fff)':'#fff',
               border:`1px solid ${file?'color-mix(in srgb,var(--c-done) 40%,transparent)':'var(--line)'}`,
@@ -457,10 +460,12 @@ export function AdminNouveauChantier({ go, openChantier, onLogout, isAdmin }) {
               </div>
               <div style={{flex:1,minWidth:0}}>
                 <div style={{fontFamily:'var(--font-head)',fontWeight:700,fontSize:14.5,color:'var(--ink)'}}>
-                  {lbl}
+                  {lbl}{req&&<span style={{color:'var(--c-blocked)',marginLeft:4}}>*</span>}
                 </div>
                 <div style={{fontSize:12.5,color:'var(--muted)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
-                  {file?file.name:'Aucun fichier sélectionné'}
+                  {file?file.name
+                    :cat==='mandat'?'Généré automatiquement si absent'
+                    :'Aucun fichier sélectionné'}
                 </div>
               </div>
               <label style={{cursor:'pointer',padding:'8px 14px',border:'1px solid var(--line)',borderRadius:'var(--r-input)',
@@ -491,7 +496,7 @@ export function AdminNouveauChantier({ go, openChantier, onLogout, isAdmin }) {
         </div>
         <div style={{marginTop:22,display:'flex',gap:12,justifyContent:'flex-end'}}>
           <Btn variant="ghost" onClick={()=>setStep(1)}>Retour</Btn>
-          <Btn variant="dark" iconR="chevR" onClick={()=>setStep(3)}>Continuer</Btn>
+          <Btn variant="dark" iconR="chevR" disabled={!canStep3} onClick={()=>canStep3&&setStep(3)}>Continuer</Btn>
         </div>
       </Card>}
 
@@ -529,8 +534,8 @@ export function AdminNouveauChantier({ go, openChantier, onLogout, isAdmin }) {
             <span style={{fontSize:14,color:'var(--ink)'}}>{photos.length} photo(s)</span>
           </div>}
         </div>
-        {/* Mandat EDF prérempli */}
-        <div style={{borderTop:'1px solid var(--line)',paddingTop:16,marginBottom:16}}>
+        {/* Mandat EDF prérempli — masqué si un mandat a été fourni à l'étape Documents */}
+        {!docs.mandat&&<div style={{borderTop:'1px solid var(--line)',paddingTop:16,marginBottom:16}}>
           <div style={{display:'flex',alignItems:'center',gap:12,flexWrap:'wrap'}}>
             <div style={{flex:1,minWidth:220}}>
               <div style={{fontFamily:'var(--font-head)',fontWeight:700,fontSize:14.5,color:'var(--ink)'}}>Mandat EDF</div>
@@ -550,7 +555,7 @@ export function AdminNouveauChantier({ go, openChantier, onLogout, isAdmin }) {
               finally{ setMandatLoading(false); }
             }}>Télécharger le mandat (PDF)</Btn>
           </div>
-        </div>
+        </div>}
         {err&&<p style={{margin:'0 0 12px',color:'var(--c-blocked)',fontSize:14}}>{err}</p>}
         <div style={{display:'flex',gap:12,justifyContent:'flex-end'}}>
           <Btn variant="ghost" onClick={()=>setStep(2)}>Retour</Btn>

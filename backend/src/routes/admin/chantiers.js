@@ -150,8 +150,9 @@ router.post('/', async (req, res, next) => {
     await dbClient.query('COMMIT');
 
     // Mandat EDF prérempli, enregistré parmi les documents du chantier
+    // — sauf si un mandat est fourni dans le formulaire (uploadé juste après).
     // (échec non bloquant : la création reste valide).
-    try {
+    if (req.body.mandat_fourni !== true) try {
       const fichier = await genererMandatFichier({
         chantierId: chantier.id, schema: req.schema,
         reference: reference_client.trim(),
