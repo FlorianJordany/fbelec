@@ -250,6 +250,32 @@ open redirect (navigation interne, `?chantier=` casté en entier), secrets front
   `frontend/src/admin.jsx`, `frontend/src/client.jsx`. `node --check` OK ; build OK ; formulaire
   client vérifié en preview (2 champs Référence, bascule facturation, 0 erreur).
 
+## 16. Fil de messages client, commentaire de création, ajustements mandat (2026-07-22)
+
+- **Mandat EDF (ajustements)** : mandataire = « Société F.B ELEC ( Monsieur Franck BORDIER) »
+  (10 pt, tient dans la ligne calibrée : 213 pt / 320 max) ; cases « contrat de fourniture
+  d'électricité » **décochées** (souscription + résiliation → seul « branchement provisoire »
+  reste coché) ; signature repositionnée **côté mandataire** (x:337, position d'origine déjà
+  validée visuellement).
+- **Message client → fil de discussion** : `POST /api/client/contact` accepte un `chantier_id`
+  facultatif (validé entier > 0, **accès contrôlé par `allowedClientIds()` — anti-IDOR**,
+  404 sinon). Le message est stocké dans `fbelec.notes` (`de_client=TRUE`, auteur = nom du
+  client côté serveur, jamais du payload ; requête paramétrée) → visible dans la carte
+  « Message au client » (admin, bordure jaune + auteur) et dans le fil « Messages » côté
+  client (avatar initiales). L'admin répond via la carte existante (note e-mailée au client) :
+  fil bidirectionnel. **E-mail enrichi** (`sendContactClient`) : société, téléphone, chantier
+  (nom/adresse/références) + bouton « Voir et répondre sur le site » →
+  `PUBLIC_URL?chantier=<id>` (deep-link existant, ouvre la fiche admin après connexion).
+  Migration `2026-07-22_commentaire_notes_client.sql` (`notes.de_client`).
+- **Commentaire de création** : colonne `chantiers.commentaire` (TEXT, facultatif, validé
+  `str(max 5000)` backend), textarea à l'étape 2 Documents (client + admin), transmis au POST,
+  affiché dans le récapitulatif et dans « Informations du dossier » (gestion admin).
+- **Fichiers** : `db/migrations/2026-07-22_commentaire_notes_client.sql` (nouveau),
+  `backend/src/services/{mandat.js, mailer.js}`, `backend/src/routes/{admin,client}/chantiers.js`,
+  `frontend/src/{admin.jsx, client.jsx}`. `node --check` OK (4 fichiers) ; build OK ; parcours
+  vérifiés en preview (payloads capturés : `commentaire` et `chantier_id` transmis ; gate
+  documents obligatoires intact ; affichages admin/client contrôlés).
+
 ## 15. Mandat EDF PDF, contact facturation, deps (2026-07-21)
 
 - **Génération du mandat EDF prérempli** : service `backend/src/services/mandat.js` (pdf-lib,

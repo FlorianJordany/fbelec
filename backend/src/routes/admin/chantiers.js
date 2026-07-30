@@ -91,9 +91,7 @@ router.get('/:id', async (req, res, next) => {
 
 // POST /api/admin/chantiers
 router.post('/', async (req, res, next) => {
-  const dbClient = await pool.connect();
   try {
-    await dbClient.query('BEGIN');
     const {
       client_id, nom, adresse, commune, code_postal, type_prestation,
       adresse_facturation, puissance_demandee, date_debut_chantier, duree_chantier, terrain_viabilise,
@@ -105,6 +103,7 @@ router.post('/', async (req, res, next) => {
       enedis_type_prestation, enedis_delivery_status, enedis_date_demande,
       enedis_date_etude, enedis_date_travaux, enedis_lat, enedis_lng, enedis_point_arret,
     } = req.body;
+    const commentaire = str(req.body.commentaire, { max: 5000, label: 'Commentaire' });
     if (!client_id || !adresse || !commune)
       return res.status(400).json({ error: 'Champs obligatoires manquants.' });
     if (typeof terrain_viabilise !== 'boolean')
@@ -116,38 +115,49 @@ router.post('/', async (req, res, next) => {
 
     const chantierNom = nom || `${adresse}, ${commune}`;
 
-    // Insérer d'abord pour obtenir l'ID, puis calculer la référence
-    const { rows: [chantier] } = await dbClient.query(
-      `INSERT INTO fbelec.chantiers
-         (client_id,reference,nom,adresse,commune,code_postal,type_prestation,
-          adresse_facturation,puissance_demandee,date_debut_chantier,duree_chantier,
-          statut,resume,prochaine_action,prochaine_action_qui,prochaine_action_date,
-          action_requise_titre,action_requise_texte,action_requise_cta,derniere_maj,
-          enedis_ref_affaire,enedis_delivery_id,enedis_contrat,enedis_pdl,
-          enedis_type_prestation,enedis_delivery_status,enedis_date_demande,
-          enedis_date_etude,enedis_date_travaux,enedis_lat,enedis_lng,enedis_point_arret,terrain_viabilise,
-          reference_client,reference_facturation,puissance_type,facturation_telephone,facturation_email)
-       VALUES ($1,'TMP',$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37)
-       RETURNING *`,
-      [client_id,chantierNom,adresse,commune,code_postal||null,type_prestation||null,
-       adresse_facturation||null,puissance_demandee||null,date_debut_chantier||null,duree_chantier||null,
-       statut||'prepa',resume||null,prochaine_action||null,prochaine_action_qui||null,prochaine_action_date||null,
-       action_requise_titre||null,action_requise_texte||null,action_requise_cta||null,derniere_maj||null,
-       enedis_ref_affaire||null,enedis_delivery_id||null,enedis_contrat||null,enedis_pdl||null,
-       enedis_type_prestation||null,enedis_delivery_status||null,enedis_date_demande||null,
-       enedis_date_etude||null,enedis_date_travaux||null,enedis_lat||null,enedis_lng||null,enedis_point_arret||null,
-       terrain_viabilise,reference_client.trim(),reference_facturation?.trim()||null,puissance_type,
-       facturation_telephone?.trim()||null,facturation_email?.trim()||null]
-    );
+    let chantier, reference;
+    const dbClient = await pool.connect();
+    try {
+      await dbClient.query('BEGIN');
 
-    // Référence fournie par l'admin ou générée automatiquement
-    const dep = (code_postal || '').replace(/[^0-9]/g,'').slice(0,2).padEnd(2,'X');
-    const vil = commune.normalize('NFD').replace(/[̀-ͯ]/g,'').replace(/[^A-Za-z0-9]/g,'').toUpperCase().slice(0,3).padEnd(3,'X');
-    const reference = req.body.reference?.trim() || `${dep}-${vil}-ADM-${chantier.id}`;
+      // Insérer d'abord pour obtenir l'ID, puis calculer la référence.
+      // Référence provisoire unique côté SQL : une valeur fixe ('TMP') restée en base
+      // après un échec bloquerait toutes les créations suivantes (index unique).
+      ({ rows: [chantier] } = await dbClient.query(
+        `INSERT INTO fbelec.chantiers
+           (client_id,reference,nom,adresse,commune,code_postal,type_prestation,
+            adresse_facturation,puissance_demandee,date_debut_chantier,duree_chantier,
+            statut,resume,prochaine_action,prochaine_action_qui,prochaine_action_date,
+            action_requise_titre,action_requise_texte,action_requise_cta,derniere_maj,
+            enedis_ref_affaire,enedis_delivery_id,enedis_contrat,enedis_pdl,
+            enedis_type_prestation,enedis_delivery_status,enedis_date_demande,
+            enedis_date_etude,enedis_date_travaux,enedis_lat,enedis_lng,enedis_point_arret,terrain_viabilise,
+            reference_client,reference_facturation,puissance_type,facturation_telephone,facturation_email,commentaire)
+         VALUES ($1,'TMP-'||md5(random()::text),$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38)
+         RETURNING *`,
+        [client_id,chantierNom,adresse,commune,code_postal||null,type_prestation||null,
+         adresse_facturation||null,puissance_demandee||null,date_debut_chantier||null,duree_chantier||null,
+         statut||'prepa',resume||null,prochaine_action||null,prochaine_action_qui||null,prochaine_action_date||null,
+         action_requise_titre||null,action_requise_texte||null,action_requise_cta||null,derniere_maj||null,
+         enedis_ref_affaire||null,enedis_delivery_id||null,enedis_contrat||null,enedis_pdl||null,
+         enedis_type_prestation||null,enedis_delivery_status||null,enedis_date_demande||null,
+         enedis_date_etude||null,enedis_date_travaux||null,enedis_lat||null,enedis_lng||null,enedis_point_arret||null,
+         terrain_viabilise,reference_client.trim(),reference_facturation?.trim()||null,puissance_type,
+         facturation_telephone?.trim()||null,facturation_email?.trim()||null,commentaire]
+      ));
 
-    await dbClient.query('UPDATE fbelec.chantiers SET reference = $1 WHERE id = $2', [reference, chantier.id]);
-    await dbClient.query('SELECT fbelec.init_etapes($1)', [chantier.id]);
-    await dbClient.query('COMMIT');
+      // Référence fournie par l'admin ou générée automatiquement
+      const dep = (code_postal || '').replace(/[^0-9]/g,'').slice(0,2).padEnd(2,'X');
+      const vil = commune.normalize('NFD').replace(/[̀-ͯ]/g,'').replace(/[^A-Za-z0-9]/g,'').toUpperCase().slice(0,3).padEnd(3,'X');
+      reference = req.body.reference?.trim() || `${dep}-${vil}-ADM-${chantier.id}`;
+
+      await dbClient.query('UPDATE fbelec.chantiers SET reference = $1 WHERE id = $2', [reference, chantier.id]);
+      await dbClient.query('SELECT fbelec.init_etapes($1)', [chantier.id]);
+      await dbClient.query('COMMIT');
+    } catch (err) {
+      await dbClient.query('ROLLBACK');
+      throw err;
+    } finally { dbClient.release(); }
 
     // Mandat EDF prérempli, enregistré parmi les documents du chantier
     // — sauf si un mandat est fourni dans le formulaire (uploadé juste après).
@@ -168,10 +178,13 @@ router.post('/', async (req, res, next) => {
 
     res.status(201).json({ ...chantier, reference, nom: chantierNom });
   } catch (err) {
-    await dbClient.query('ROLLBACK');
-    if (err.code === '23505') return res.status(409).json({ error: 'Référence déjà utilisée.' });
+    if (err.code === '23505') {
+      // Trace la contrainte réelle (pkey = séquence désynchronisée, pas la référence)
+      console.error('[chantiers] doublon 23505:', err.constraint || '', err.detail || '');
+      return res.status(409).json({ error: 'Référence déjà utilisée.' });
+    }
     next(err);
-  } finally { dbClient.release(); }
+  }
 });
 
 // PUT /api/admin/chantiers/:id

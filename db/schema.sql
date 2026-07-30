@@ -123,6 +123,7 @@ CREATE TABLE fbelec.chantiers (
   reference_facturation  text,
   facturation_telephone  text,
   facturation_email      text,
+  commentaire            text,
   cree_par_client        boolean DEFAULT false NOT NULL
 );
 CREATE INDEX chantiers_client_id_idx ON fbelec.chantiers (client_id);
@@ -182,6 +183,7 @@ CREATE TABLE fbelec.notes (
   auteur         text DEFAULT 'Franck Bordier' NOT NULL,
   texte          text NOT NULL,
   visible_client boolean DEFAULT true NOT NULL,
+  de_client      boolean DEFAULT false NOT NULL,
   date_affichee  text,
   created_at     timestamptz DEFAULT now() NOT NULL,
   updated_at     timestamptz DEFAULT now() NOT NULL

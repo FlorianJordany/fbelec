@@ -46,7 +46,7 @@ router.get('/chantiers', async (req, res, next) => {
     const ids = await allowedClientIds(req.clientId);
     const { rows } = await pool.query(
       `SELECT
-         c.id, c.reference, c.nom, c.adresse, c.commune, c.type_prestation,
+         c.id, c.reference, c.reference_client, c.nom, c.adresse, c.commune, c.type_prestation,
          c.statut, c.prochaine_action, c.prochaine_action_qui, c.prochaine_action_date,
          c.derniere_maj, c.action_requise_titre, c.archive,
          CASE WHEN c.client_id <> $3
@@ -107,7 +107,7 @@ router.get('/chantiers/:id', async (req, res, next) => {
     );
 
     const { rows: notes } = await pool.query(
-      'SELECT id, auteur, texte, date_affichee, created_at FROM fbelec.notes WHERE chantier_id = $1 AND visible_client = TRUE ORDER BY created_at DESC',
+      'SELECT id, auteur, texte, date_affichee, de_client, created_at FROM fbelec.notes WHERE chantier_id = $1 AND visible_client = TRUE ORDER BY created_at DESC',
       [chantierId]
     );
 
@@ -134,6 +134,7 @@ router.post('/chantiers', async (req, res, next) => {
             date_debut_chantier, duree_chantier, terrain_viabilise,
             reference_client, reference_facturation, puissance_type,
             facturation_telephone, facturation_email } = req.body;
+    const commentaire = str(req.body.commentaire, { max: 5000, label: 'Commentaire' });
 
     if (!adresse?.trim() || !commune?.trim() || !adresse_facturation?.trim()
         || !puissance_demandee?.trim() || !date_debut_chantier || !duree_chantier?.trim()) {
@@ -157,21 +158,23 @@ router.post('/chantiers', async (req, res, next) => {
     try {
       await dbClient.query('BEGIN');
 
-      // Insérer d'abord pour obtenir l'ID
+      // Insérer d'abord pour obtenir l'ID.
+      // Référence provisoire unique côté SQL : une valeur fixe ('TMP') restée en base
+      // après un échec bloquerait toutes les créations suivantes (index unique).
       const { rows: [chantier] } = await dbClient.query(
         `INSERT INTO fbelec.chantiers
            (client_id, reference, nom, adresse, commune, code_postal,
             adresse_facturation, puissance_demandee, date_debut_chantier,
             duree_chantier, statut, cree_par_client, terrain_viabilise,
             reference_client, reference_facturation, puissance_type,
-            facturation_telephone, facturation_email)
-         VALUES ($1,'TMP',$2,$3,$4,$5,$6,$7,$8,$9,'prepa',TRUE,$10,$11,$12,$13,$14,$15) RETURNING *`,
+            facturation_telephone, facturation_email, commentaire)
+         VALUES ($1,'TMP-'||md5(random()::text),$2,$3,$4,$5,$6,$7,$8,$9,'prepa',TRUE,$10,$11,$12,$13,$14,$15,$16) RETURNING *`,
         [req.clientId, nom,
          adresse.trim(), commune.trim(), code_postal?.trim()||null,
          adresse_facturation.trim(), puissance_demandee.trim(),
          date_debut_chantier, duree_chantier.trim(), terrain_viabilise,
          reference_client.trim(), reference_facturation?.trim()||null, puissance_type,
-         facturation_telephone?.trim()||null, facturation_email?.trim()||null]
+         facturation_telephone?.trim()||null, facturation_email?.trim()||null, commentaire]
       );
 
       // Construire la référence : DEP-VIL-NOM-ID
@@ -348,17 +351,47 @@ router.post('/mandat', async (req, res, next) => {
 });
 
 // POST /api/client/contact — le client envoie un message à FB ELEC
+// Si chantier_id est fourni : le message est stocké dans le fil du chantier
+// (fbelec.notes, de_client=TRUE) et l'e-mail est enrichi des infos du chantier.
 router.post('/contact', async (req, res, next) => {
   try {
     const message = str(req.body.message, { required: true, max: 5000, label: 'Message' });
+    const chantierId = parseInt(req.body.chantier_id, 10);
 
     const { rows: [client] } = await pool.query(
-      'SELECT nom, email FROM fbelec.clients WHERE id = $1', [req.clientId]
+      `SELECT cl.nom, cl.email, cl.telephone, s.nom AS societe_nom
+       FROM fbelec.clients cl
+       LEFT JOIN fbelec.societes s ON s.id = cl.societe_id
+       WHERE cl.id = $1`, [req.clientId]
     );
     if (!client) return res.status(404).json({ error: 'Client introuvable.' });
 
-    sendContactClient({ clientNom: client.nom, clientEmail: client.email, message })
-      .catch(e => console.error('[mailer] contact:', e.message));
+    let chantier = null;
+    if (Number.isInteger(chantierId) && chantierId > 0) {
+      const { rows: [c] } = await pool.query(
+        `SELECT id, nom, reference, reference_client, adresse, commune
+         FROM fbelec.chantiers WHERE id = $1 AND client_id = ANY($2) AND actif = TRUE`,
+        [chantierId, await allowedClientIds(req.clientId)]
+      );
+      if (!c) return res.status(404).json({ error: 'Chantier introuvable.' });
+      chantier = c;
+      await pool.query(
+        `INSERT INTO fbelec.notes (chantier_id, auteur, texte, visible_client, de_client, date_affichee)
+         VALUES ($1, $2, $3, TRUE, TRUE, $4)`,
+        [chantier.id, client.nom, message,
+         new Date().toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' })]
+      );
+    }
+
+    sendContactClient({
+      clientNom: client.nom, clientEmail: client.email,
+      clientTelephone: client.telephone, societeNom: client.societe_nom, message,
+      chantier: chantier && {
+        id: chantier.id, nom: chantier.nom, reference: chantier.reference,
+        referenceClient: chantier.reference_client,
+        adresse: [chantier.adresse, chantier.commune].filter(Boolean).join(', '),
+      },
+    }).catch(e => console.error('[mailer] contact:', e.message));
 
     res.json({ ok: true });
   } catch (err) { next(err); }

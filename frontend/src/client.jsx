@@ -191,7 +191,7 @@ export function Login({ onLogin }) {
 // ═════════════════════════════════════════════════════════════
 //  CONTACT BLOCK
 // ═════════════════════════════════════════════════════════════
-function ContactBlock() {
+function ContactBlock({ chantierId }) {
   const isMobile = /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent) || window.innerWidth < 768;
   const [showPhone,setShowPhone]=useState(false);
   const [showForm,setShowForm]=useState(false);
@@ -203,7 +203,8 @@ function ContactBlock() {
     if (!message.trim()) return;
     setSending(true);
     try {
-      await apiFetch('/api/client/contact',{method:'POST',body:{message}});
+      await apiFetch('/api/client/contact',{method:'POST',
+        body:chantierId?{message,chantier_id:chantierId}:{message}});
       setSent(true); setMessage("");
       setTimeout(()=>{setSent(false);setShowForm(false);},3500);
     } catch {}
@@ -379,7 +380,7 @@ function ChantierCard({ c, onOpen }) {
     </div>
     <div style={{padding:22,display:"flex",flexDirection:"column",gap:14,flex:1}}>
       <div>
-        <h3 style={{margin:"0 0 5px",fontFamily:"var(--font-head)",fontWeight:700,fontSize:19,color:"var(--ink)"}}>{c.nom}</h3>
+        <h3 style={{margin:"0 0 5px",fontFamily:"var(--font-head)",fontWeight:700,fontSize:19,color:"var(--ink)"}}>{c.reference_client||c.nom}</h3>
         <div style={{display:"flex",alignItems:"center",gap:6,color:"var(--slate)",fontSize:14}}>
           <Icon name="pin" size={15}/>{c.adresse}, {c.commune}
         </div>
@@ -467,7 +468,7 @@ export function ChantierDetail({ chantierId, go, onLogout, isAdmin, backTo, apiB
               <span style={{fontSize:13,color:"var(--muted)",fontFamily:"var(--font-mono)"}}>Dossier {c.reference}</span>
             </div>
             <h1 style={{margin:"0 0 10px",fontFamily:"var(--font-display)",fontWeight:700,fontSize:34,
-              textTransform:"uppercase",color:"var(--ink)",letterSpacing:"-.01em",lineHeight:1.05}}>{c.nom}</h1>
+              textTransform:"uppercase",color:"var(--ink)",letterSpacing:"-.01em",lineHeight:1.05}}>{c.reference_client||c.nom}</h1>
             <div style={{display:"flex",flexDirection:"column",gap:6,color:"var(--slate)",fontSize:14.5}}>
               <span style={{display:"flex",alignItems:"center",gap:8}}><Icon name="pin" size={16}/>{c.adresse}, {c.commune}</span>
               {c.type_prestation&&<span style={{display:"flex",alignItems:"center",gap:8}}><Icon name="bolt" size={16}/>{c.type_prestation}</span>}
@@ -537,7 +538,7 @@ export function ChantierDetail({ chantierId, go, onLogout, isAdmin, backTo, apiB
         </Card>}
       </div>
       <div style={{display:"grid",gap:24,position:"sticky",top:84}}>
-        <ContactBlock/>
+        <ContactBlock chantierId={chantierId}/>
         {/* Informations administratives */}
         {(c.adresse_facturation||c.puissance_demandee||c.date_debut_chantier||c.duree_chantier)&&
           !isAdmin&&<Card pad={0} style={{overflow:"hidden"}}>
@@ -569,7 +570,7 @@ export function ChantierDetail({ chantierId, go, onLogout, isAdmin, backTo, apiB
           </div>
         </Card>}
         {c.notes.length>0&&<Card>
-          <SectionTitle icon="mail">Informations FB ELEC</SectionTitle>
+          <SectionTitle icon="mail">Messages</SectionTitle>
           <Notes notes={c.notes}/>
         </Card>}
         {isClientView||backTo==='admin-vue-client'
@@ -787,12 +788,17 @@ function Documents({ documents, showStatut=false }) {
   </div>;
 }
 
-// ── Notes ─────────────────────────────────────────────────────
-function Notes({ notes }) {
+// ── Notes (fil de messages — partagé avec la fiche admin) ────
+export function Notes({ notes }) {
   return <div style={{display:"grid",gap:14}}>
-    {notes.map(n=><div key={n.id} style={{display:"flex",gap:12}}>
-      <div style={{width:38,height:38,borderRadius:999,background:"var(--jaune)",color:"#1a1a1a",
-        display:"grid",placeItems:"center",flex:"0 0 auto",fontFamily:"var(--font-head)",fontWeight:700}}>FB</div>
+    {notes.map(n=>{
+      const deClient=!!n.de_client;
+      const initiales=deClient
+        ?(n.auteur||"C").split(/\s+/).map(w=>w[0]).join("").slice(0,2).toUpperCase()
+        :"FB";
+      return <div key={n.id} style={{display:"flex",gap:12}}>
+      <div style={{width:38,height:38,borderRadius:999,background:deClient?"var(--line-strong)":"var(--jaune)",color:"#1a1a1a",
+        display:"grid",placeItems:"center",flex:"0 0 auto",fontFamily:"var(--font-head)",fontWeight:700,fontSize:deClient?13:undefined}}>{initiales}</div>
       <div style={{flex:1,background:"var(--bg-soft)",borderRadius:"var(--r-input)",padding:"13px 16px",borderTopLeftRadius:4}}>
         <div style={{display:"flex",justifyContent:"space-between",gap:8,marginBottom:5,flexWrap:"wrap"}}>
           <span style={{fontFamily:"var(--font-head)",fontWeight:700,fontSize:13.5,color:"var(--ink)"}}>{n.auteur}</span>
@@ -800,7 +806,7 @@ function Notes({ notes }) {
         </div>
         <p style={{margin:0,fontSize:14.5,color:"var(--ink)",lineHeight:1.55}}>{n.texte}</p>
       </div>
-    </div>)}
+    </div>;})}
   </div>;
 }
 
@@ -1156,6 +1162,7 @@ export function NouveauChantierClient({ go, onLogout, isAdmin }) {
   const [dureeUnite,setDureeUnite]=useState('semaines');
   const [docs,setDocs]=useState({permis_construire:null,plan_situation:null,plan_masse:null,mandat:null});
   const [photos,setPhotos]=useState([]);
+  const [commentaire,setCommentaire]=useState('');
   const [loading,setLoading]=useState(false);
   const [err,setErr]=useState('');
   const [step,setStep]=useState(1);
@@ -1184,7 +1191,8 @@ export function NouveauChantierClient({ go, onLogout, isAdmin }) {
         reference_facturation: factType==='differente'?factReference:'',
         facturation_telephone: factType==='differente'?factTelephone:'',
         facturation_email: factType==='differente'?factEmail:'',
-        mandat_fourni: !!docs.mandat
+        mandat_fourni: !!docs.mandat,
+        commentaire: commentaire.trim()
       }});
       // Upload docs
       for (const [cat,file] of Object.entries(docs)) {
@@ -1428,6 +1436,12 @@ export function NouveauChantierClient({ go, onLogout, isAdmin }) {
             <input type="file" style={{display:'none'}} accept="image/*" multiple onChange={addPhotos}/>
           </label>
         </div>
+        <div style={{marginTop:18,borderTop:'1px solid var(--line)',paddingTop:18}}>
+          <label style={labelSt}>Commentaire (optionnel)</label>
+          <textarea value={commentaire} onChange={e=>setCommentaire(e.target.value)} rows={3}
+            placeholder="Informations que vous jugez importantes pour votre chantier…"
+            style={{...inputSt,resize:'vertical',lineHeight:1.5,fontSize:14.5}}/>
+        </div>
         {err&&<p style={{margin:'14px 0 0',color:'var(--c-blocked)',fontSize:14}}>{err}</p>}
         <div style={{marginTop:22,display:'flex',gap:12,justifyContent:'flex-end'}}>
           <Btn variant="ghost" onClick={()=>setStep(1)}>Retour</Btn>
@@ -1470,6 +1484,11 @@ export function NouveauChantierClient({ go, onLogout, isAdmin }) {
             <span style={{fontSize:14,color:'var(--ink)'}}>{photos.length} photo(s)</span>
           </div>}
         </div>
+        {commentaire.trim()&&<div style={{borderTop:'1px solid var(--line)',paddingTop:16,marginBottom:8}}>
+          <div style={{fontSize:13,color:'var(--muted)',fontFamily:'var(--font-head)',fontWeight:700,
+            textTransform:'uppercase',letterSpacing:'.05em',marginBottom:8}}>Commentaire</div>
+          <p style={{margin:0,fontSize:14.5,color:'var(--ink)',lineHeight:1.55,whiteSpace:'pre-wrap'}}>{commentaire.trim()}</p>
+        </div>}
         {/* Mandat EDF prérempli — masqué si un mandat a été fourni à l'étape Documents */}
         {!docs.mandat&&<div style={{borderTop:'1px solid var(--line)',paddingTop:16,marginBottom:16}}>
           <div style={{display:'flex',alignItems:'center',gap:12,flexWrap:'wrap'}}>

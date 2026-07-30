@@ -27,7 +27,7 @@ const P2 = {
   faitA: { x: 92, y: 227 },
   le:    { x: 80, y: 215 },
   exemplaires: { x: 73, y: 204 },
-  signature: { x: 118, y: 96, w: 150 },        // sous « Signature du mandant »
+  signature: { x: 337, y: 96, w: 150 },        // sous « Signature du mandataire »
 };
 
 // Réduit la taille de police pour tenir dans maxW (jamais < 7pt).
@@ -55,15 +55,13 @@ export async function genererMandat({ reference, adresse, ville }) {
 
   // Page 1 — identités
   T(p1, reference, P1.mandant.x, P1.mandant.y, { maxW: 320 });
-  T(p1, 'F.B ELEC', P1.mandataire.x, P1.mandataire.y, { maxW: 320 });
+  T(p1, 'Société F.B ELEC ( Monsieur Franck BORDIER )', P1.mandataire.x, P1.mandataire.y, { maxW: 320 });
   // Droits RGPD : tout cocher
   for (const y of P1.rgpdYs) X(p1, P1.rgpdX, y);
-  // Souscription : électricité + branchement provisoire (pas le gaz)
-  X(p1, P1.sousX, P1.sousYs[0]);
+  // Souscription : branchement provisoire uniquement (ni électricité ni gaz)
   X(p1, P1.sousX, P1.sousYs[2]);
   T(p1, adresse, P1.sousAdresse.x, P1.sousAdresse.y, { size: 9, maxW: 460 });
-  // Résiliation : électricité + branchement provisoire
-  X(p1, P1.resiX, P1.resiYs[0]);
+  // Résiliation : branchement provisoire uniquement
   X(p1, P1.resiX, P1.resiYs[2]);
   T(p1, adresse, P1.resiAdresse.x, P1.resiAdresse.y, { size: 9, maxW: 460 });
 

@@ -177,18 +177,28 @@ export async function sendNouvelleNote({ nom, email, chantierNom, texte, chantie
   });
 }
 
-export async function sendContactClient({ clientNom, clientEmail, message }) {
+export async function sendContactClient({ clientNom, clientEmail, clientTelephone, societeNom, message, chantier }) {
   if (!process.env.SMTP_HOST) {
     console.warn('[mailer] SMTP non configuré — email non envoyé');
     return;
   }
   const from = process.env.SMTP_FROM || process.env.SMTP_USER;
   const to = process.env.CONTACT_EMAIL || from;
+  const base = process.env.PUBLIC_URL || '';
+  const url = chantier?.id ? `${base}?chantier=${chantier.id}` : '';
+  const rowsChantier = chantier ? [
+    ['Chantier', chantier.nom],
+    ['Adresse', chantier.adresse],
+    ['Référence client', chantier.referenceClient],
+    ['Référence dossier', chantier.reference],
+  ].filter(([, v]) => v) : [];
   await transporter.sendMail({
     from: `"FB ELEC Suivi" <${from}>`,
     to,
     replyTo: clientEmail,
-    subject: `Message client — ${clientNom}`,
+    subject: chantier
+      ? `Message client — ${clientNom} — ${chantier.nom}`
+      : `Message client — ${clientNom}`,
     html: `
       <div style="font-family:Arial,sans-serif;max-width:560px;margin:0 auto">
         <div style="background:#1a1a1a;padding:28px 32px">
@@ -197,12 +207,26 @@ export async function sendContactClient({ clientNom, clientEmail, message }) {
         <div style="padding:32px;border:1px solid #e9ebee;border-top:none">
           <div style="background:#f5f6f8;border-radius:10px;padding:18px 22px;margin-bottom:20px">
             <div style="font-size:12px;color:#98a0a9;text-transform:uppercase;letter-spacing:.06em;font-weight:700;margin-bottom:4px">De</div>
-            <div style="font-size:16px;color:#20242a;font-weight:600">${clientNom}</div>
-            <div style="font-size:14px;color:#5c656f">${clientEmail}</div>
+            <div style="font-size:16px;color:#20242a;font-weight:600">${clientNom}${societeNom ? ` <span style="font-weight:400;color:#5c656f">· ${societeNom}</span>` : ''}</div>
+            <div style="font-size:14px;color:#5c656f">${clientEmail}${clientTelephone ? ` · ${clientTelephone}` : ''}</div>
           </div>
-          <div style="font-size:15px;color:#20242a;line-height:1.7;white-space:pre-wrap">${message}</div>
+          ${rowsChantier.length ? `
+          <div style="background:#f5f6f8;border-left:4px solid #F5C518;border-radius:0 10px 10px 0;padding:16px 20px;margin-bottom:20px">
+            ${rowsChantier.map(([k, v]) => `
+            <div style="margin-bottom:8px">
+              <div style="font-size:11px;color:#98a0a9;text-transform:uppercase;letter-spacing:.06em;font-weight:700;margin-bottom:2px">${k}</div>
+              <div style="font-size:14.5px;color:#20242a;font-weight:600">${v}</div>
+            </div>`).join('')}
+          </div>` : ''}
+          <div style="font-size:15px;color:#20242a;line-height:1.7;white-space:pre-wrap;background:#fff;border:1px solid #e9ebee;border-radius:10px;padding:16px 20px">${message}</div>
+          ${url ? `
+          <a href="${url}"
+            style="display:inline-block;background:#F5C518;color:#1a1a1a;padding:13px 26px;
+            border-radius:10px;text-decoration:none;font-weight:700;font-size:15px;margin-top:24px">
+            Voir et répondre sur le site →
+          </a>` : ''}
           <p style="margin:24px 0 0;font-size:13px;color:#98a0a9">
-            Répondez directement à cet e-mail pour contacter le client.
+            ${url ? 'Le message est aussi visible dans le fil du chantier. Vous pouvez également répondre' : 'Répondez'} directement à cet e-mail pour contacter le client.
           </p>
         </div>
       </div>

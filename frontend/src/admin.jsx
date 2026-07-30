@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { apiFetch, chantierBadge, downloadFile, downloadPdf, CAT_LABELS, CAT_REQUIRED, DOC_OPTIONS } from './api.js';
 import { Icon, Btn, StatusPill, Card, Field, SectionTitle, Toast, useToast,
          ColFilter, SearchableSelect, Modal, AppHeader, AddressAutocomplete, Footer } from './ui.jsx';
+import { Notes } from './client.jsx';
 
 // ─── Documents (admin) ───────────────────────────────────────
 function AdminDocumentsSection({ chantierId, docs, reload, showToast }) {
@@ -223,6 +224,7 @@ export function AdminNouveauChantier({ go, openChantier, onLogout, isAdmin }) {
   const [dureeUnite,setDureeUnite]=useState('semaines');
   const [docs,setDocs]=useState({permis_construire:null,plan_situation:null,plan_masse:null,mandat:null});
   const [photos,setPhotos]=useState([]);
+  const [commentaire,setCommentaire]=useState('');
   const [loading,setLoading]=useState(false);
   const [err,setErr]=useState('');
   const [step,setStep]=useState(1);
@@ -257,6 +259,7 @@ export function AdminNouveauChantier({ go, openChantier, onLogout, isAdmin }) {
         facturation_telephone: factType==='differente'?factTelephone:'',
         facturation_email: factType==='differente'?factEmail:'',
         mandat_fourni: !!docs.mandat,
+        commentaire: commentaire.trim(),
       }});
       for (const [cat,file] of Object.entries(docs)) {
         if (!file) continue;
@@ -494,6 +497,12 @@ export function AdminNouveauChantier({ go, openChantier, onLogout, isAdmin }) {
             <input type="file" style={{display:'none'}} accept="image/*" multiple onChange={addPhotos}/>
           </label>
         </div>
+        <div style={{marginTop:18,borderTop:'1px solid var(--line)',paddingTop:18}}>
+          <label style={labelSt}>Commentaire (optionnel)</label>
+          <textarea value={commentaire} onChange={e=>setCommentaire(e.target.value)} rows={3}
+            placeholder="Informations importantes pour le chantier…"
+            style={{...inputSt,resize:'vertical',lineHeight:1.5,fontSize:14.5}}/>
+        </div>
         <div style={{marginTop:22,display:'flex',gap:12,justifyContent:'flex-end'}}>
           <Btn variant="ghost" onClick={()=>setStep(1)}>Retour</Btn>
           <Btn variant="dark" iconR="chevR" disabled={!canStep3} onClick={()=>canStep3&&setStep(3)}>Continuer</Btn>
@@ -534,6 +543,11 @@ export function AdminNouveauChantier({ go, openChantier, onLogout, isAdmin }) {
             <span style={{fontSize:14,color:'var(--ink)'}}>{photos.length} photo(s)</span>
           </div>}
         </div>
+        {commentaire.trim()&&<div style={{borderTop:'1px solid var(--line)',paddingTop:16,marginBottom:16}}>
+          <div style={{fontSize:13,color:'var(--muted)',fontFamily:'var(--font-head)',fontWeight:700,
+            textTransform:'uppercase',letterSpacing:'.05em',marginBottom:8}}>Commentaire</div>
+          <p style={{margin:0,fontSize:14.5,color:'var(--ink)',lineHeight:1.55,whiteSpace:'pre-wrap'}}>{commentaire.trim()}</p>
+        </div>}
         {/* Mandat EDF prérempli — masqué si un mandat a été fourni à l'étape Documents */}
         {!docs.mandat&&<div style={{borderTop:'1px solid var(--line)',paddingTop:16,marginBottom:16}}>
           <div style={{display:'flex',alignItems:'center',gap:12,flexWrap:'wrap'}}>
@@ -922,6 +936,7 @@ export function AdminChantier({ chantierId, go, onLogout, isAdmin }) {
               ["Date de début souhaitée", c.date_debut_chantier?.slice(0,10)],
               ["Terrain viabilisé", c.terrain_viabilise===true?"Oui":c.terrain_viabilise===false?"Non":null],
               ["Type de prestation", c.type_prestation],
+              ["Commentaire", c.commentaire],
             ].filter(([,v])=>v).map(([k,v])=><div key={k} style={{minWidth:0}}>
               <div style={{fontSize:11.5,color:"var(--muted)",textTransform:"uppercase",letterSpacing:".06em",fontWeight:700,marginBottom:3}}>{k}</div>
               <div style={{fontSize:14.5,color:"var(--ink)",fontWeight:500,wordBreak:"break-word"}}>{v}</div>
@@ -1066,11 +1081,8 @@ export function AdminChantier({ chantierId, go, onLogout, isAdmin }) {
           <div style={{marginTop:12}}>
             <Btn variant="primary" full icon="check" onClick={publishNote}>Publier côté client</Btn>
           </div>
-          {c.notes.length>0&&<div style={{marginTop:18,display:"grid",gap:10}}>
-            {c.notes.slice(0,3).map(n=><div key={n.id} style={{fontSize:13.5,color:"var(--slate)",
-              padding:"10px 13px",background:"var(--bg-soft)",borderRadius:"var(--r-input)"}}>
-              <span style={{fontWeight:700,color:"var(--ink)"}}>{n.date_affichee||"Aujourd'hui"} — </span>{n.texte}
-            </div>)}
+          {c.notes.length>0&&<div style={{marginTop:18}}>
+            <Notes notes={c.notes.slice(0,5)}/>
           </div>}
         </Card>
       </div>
@@ -1734,7 +1746,7 @@ function ChantierCardVue({ c, onOpen }) {
         <div style={{fontSize:11,color:"var(--jaune-deep)",fontWeight:700,textTransform:"uppercase",letterSpacing:".06em",marginBottom:3}}>
           {c.client_nom}
         </div>
-        <h3 style={{margin:"0 0 4px",fontFamily:"var(--font-head)",fontWeight:700,fontSize:17,color:"var(--ink)"}}>{c.nom}</h3>
+        <h3 style={{margin:"0 0 4px",fontFamily:"var(--font-head)",fontWeight:700,fontSize:17,color:"var(--ink)"}}>{c.reference_client||c.nom}</h3>
         <div style={{fontSize:12.5,color:"var(--slate)",fontFamily:"var(--font-mono)"}}>{c.reference}</div>
       </div>
       <div>
