@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
-import { apiFetch, API_BASE, chantierBadge, downloadFile, downloadPdf, CAT_LABELS, CAT_REQUIRED, DOC_OPTIONS } from './api.js';
+import { apiFetch, API_BASE, chantierBadge, downloadFile, downloadPdf, CAT_LABELS, CAT_REQUIRED, DOC_OPTIONS, libelleGps } from './api.js';
 import { Icon, Logo, Btn, StatusPill, Card, Field, SectionTitle, Toast, useToast, AppHeader,
-         AddressAutocomplete, Footer } from './ui.jsx';
+         AddressAutocomplete, CarteGps, GpsLinks, Footer } from './ui.jsx';
 
 // ═════════════════════════════════════════════════════════════
 //  ÉCRAN LOGIN
@@ -17,15 +17,28 @@ export function Login({ onLogin }) {
   const [forgotSent,setForgotSent]=useState(false);
   const [forgotLoading,setForgotLoading]=useState(false);
 
-  // Login direct sans apiFetch pour éviter le reload sur 401
+  // Login direct sans apiFetch pour éviter le reload sur 401.
+  // Erreurs typées pour afficher la vraie cause : e.network (serveur injoignable,
+  // wifi public/portail captif qui intercepte la requête) et e.status (401, 429…).
+  const NET_ERR = "Connexion au serveur impossible. Vérifiez votre réseau (wifi public, portail captif…) puis réessayez.";
   const tryLogin = async (path, body) => {
-    const r = await fetch(API_BASE + path, {
-      method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body: JSON.stringify(body),
-    });
-    const data = await r.json();
-    if (!r.ok) throw new Error(data.error || 'Erreur');
+    let r;
+    try {
+      r = await fetch(API_BASE + path, {
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify(body),
+      });
+    } catch { const e=new Error(NET_ERR); e.network=true; throw e; }
+    let data;
+    try { data = await r.json(); }
+    catch {
+      // Réponse non-JSON : portail captif qui réécrit la page, ou limiteur global (texte brut)
+      const e = r.status===429 ? new Error("Trop de tentatives, réessayez plus tard.") : new Error(NET_ERR);
+      if (r.status!==429) e.network=true; else e.status=429;
+      throw e;
+    }
+    if (!r.ok) { const e=new Error(data.error||'Erreur'); e.status=r.status; throw e; }
     return data;
   };
 
@@ -50,7 +63,12 @@ export function Login({ onLogin }) {
       localStorage.setItem('fb_client',JSON.stringify(data.client));
       if (data.must_change_code) { onLogin(data.client, true); return; }
       window.location.reload();
-    } catch(e){setErr("Identifiants incorrects.");}
+    } catch(e){
+      if (e.network) setErr(e.message);
+      else if (e.status===429) setErr(e.message); // « Trop de tentatives, réessayez dans 15 minutes. »
+      else if (e.status===401) setErr("Identifiants incorrects.");
+      else setErr(e.message||"Erreur inattendue. Réessayez.");
+    }
     finally{setLoading(false);}
   };
 
@@ -191,7 +209,7 @@ export function Login({ onLogin }) {
 // ═════════════════════════════════════════════════════════════
 //  CONTACT BLOCK
 // ═════════════════════════════════════════════════════════════
-function ContactBlock({ chantierId }) {
+function ContactBlock({ chantierId, lectureSeule=false }) {
   const isMobile = /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent) || window.innerWidth < 768;
   const [showPhone,setShowPhone]=useState(false);
   const [showForm,setShowForm]=useState(false);
@@ -232,9 +250,9 @@ function ContactBlock({ chantierId }) {
               </div>
             : <Btn variant="primary" icon="phone" onClick={()=>setShowPhone(true)}>Appeler FB ELEC</Btn>
         }
-        <Btn variant="ghost" icon="mail" onClick={()=>setShowForm(f=>!f)}
+        {!lectureSeule&&<Btn variant="ghost" icon="mail" onClick={()=>setShowForm(f=>!f)}
           style={{color:"#fff",borderColor:"rgba(255,255,255,.3)",
-            background:showForm?"rgba(255,255,255,.1)":"transparent"}}>Écrire</Btn>
+            background:showForm?"rgba(255,255,255,.1)":"transparent"}}>Écrire</Btn>}
       </div>
     </div>
 
@@ -385,7 +403,7 @@ function ChantierCard({ c, onOpen }) {
           <Icon name="pin" size={15}/>{c.adresse}, {c.commune}
         </div>
         {c.proprietaire_nom&&<div style={{display:"flex",alignItems:"center",gap:6,color:"var(--muted)",fontSize:12.5,marginTop:4}}>
-          <Icon name="user" size={13}/>Créé par {c.proprietaire_nom}
+          <Icon name="user" size={13}/>Créé par {c.proprietaire_nom}{c.peut_modifier===false?' · consultation seule':''}
         </div>}
       </div>
       <div>
@@ -443,6 +461,8 @@ export function ChantierDetail({ chantierId, go, onLogout, isAdmin, backTo, apiB
     <AppHeader go={go} admin={false} isAdmin={isAdmin} onLogout={onLogout}/><div className="fb-spinner"/></div>;
 
   const c=data;
+  // Chantier d'un collègue vu par un compte « suivi » : consultation seule.
+  const lectureSeule=isClientView&&c.peut_modifier===false;
   const st=chantierBadge(c);
   const doneCount=c.etapes.filter(e=>e.etat==="done").length;
   const total=c.etapes.filter(e=>e.etat!=="na").length;
@@ -467,6 +487,10 @@ export function ChantierDetail({ chantierId, go, onLogout, isAdmin, backTo, apiB
               <StatusPill kind={st.kind}>{st.label}</StatusPill>
               <span style={{fontSize:13,color:"var(--muted)",fontFamily:"var(--font-mono)"}}>Dossier {c.reference}</span>
             </div>
+            {lectureSeule&&<div style={{display:"inline-flex",alignItems:"center",gap:7,marginBottom:12,padding:"6px 12px",
+              background:"var(--bg-soft)",border:"1px solid var(--line)",borderRadius:999,fontSize:13,color:"var(--slate)",fontWeight:600}}>
+              <Icon name="eye" size={15}/>Consultation seule{c.proprietaire_nom?` — chantier de ${c.proprietaire_nom}`:''}
+            </div>}
             <h1 style={{margin:"0 0 10px",fontFamily:"var(--font-display)",fontWeight:700,fontSize:34,
               textTransform:"uppercase",color:"var(--ink)",letterSpacing:"-.01em",lineHeight:1.05}}>{c.reference_client||c.nom}</h1>
             <div style={{display:"flex",flexDirection:"column",gap:6,color:"var(--slate)",fontSize:14.5}}>
@@ -538,22 +562,23 @@ export function ChantierDetail({ chantierId, go, onLogout, isAdmin, backTo, apiB
         </Card>}
       </div>
       <div style={{display:"grid",gap:24,position:"sticky",top:84}}>
-        <ContactBlock chantierId={chantierId}/>
+        <ContactBlock chantierId={chantierId} lectureSeule={lectureSeule}/>
         {/* Informations administratives */}
         {(c.adresse_facturation||c.puissance_demandee||c.date_debut_chantier||c.duree_chantier)&&
           !isAdmin&&<Card pad={0} style={{overflow:"hidden"}}>
           <div style={{padding:"16px 20px 12px",display:"flex",alignItems:"center",justifyContent:"space-between",gap:8}}>
             <SectionTitle icon="info" style={{margin:0}}>Informations du dossier</SectionTitle>
-            <button onClick={()=>go("edit-chantier")}
+            {!lectureSeule&&<button onClick={()=>go("edit-chantier")}
               style={{display:"inline-flex",alignItems:"center",gap:6,padding:"7px 13px",
                 border:"1px solid var(--line)",borderRadius:"var(--r-input)",background:"#fff",
                 cursor:"pointer",fontSize:13,fontFamily:"var(--font-head)",fontWeight:600,color:"var(--slate)"}}>
               <Icon name="settings" size={15}/>Modifier
-            </button>
+            </button>}
           </div>
           <div style={{padding:"0 20px 18px",display:"grid",gap:10}}>
             {[
               ["Référence",c.reference_client],
+              ["Localisation GPS",c.gps_lat!=null&&c.gps_lng!=null?<GpsLinks lat={c.gps_lat} lng={c.gps_lng}/>:null],
               ["Adresse facturation",c.adresse_facturation],
               ["Référence facturation",c.reference_facturation],
               ["Téléphone facturation",c.facturation_telephone],
@@ -575,8 +600,8 @@ export function ChantierDetail({ chantierId, go, onLogout, isAdmin, backTo, apiB
         </Card>}
         {isClientView||backTo==='admin-vue-client'
           ? <>
-              <ClientDocumentsSection chantierId={chantierId} docs={c.documents} reload={reload} showToast={showToast} readonly={!isClientView}/>
-              <ClientPhotosSection chantierId={chantierId} photos={c.photos} reload={reload} showToast={showToast} readonly={!isClientView}/>
+              <ClientDocumentsSection chantierId={chantierId} docs={c.documents} reload={reload} showToast={showToast} readonly={!isClientView||lectureSeule}/>
+              <ClientPhotosSection chantierId={chantierId} photos={c.photos} reload={reload} showToast={showToast} readonly={!isClientView||lectureSeule}/>
             </>
           : c.documents.length>0&&<Card>
               <SectionTitle icon="file">Documents</SectionTitle>
@@ -1163,6 +1188,9 @@ export function NouveauChantierClient({ go, onLogout, isAdmin }) {
   const [docs,setDocs]=useState({permis_construire:null,plan_situation:null,plan_masse:null,mandat:null});
   const [photos,setPhotos]=useState([]);
   const [commentaire,setCommentaire]=useState('');
+  const [gpsMode,setGpsMode]=useState(false);
+  const [gps,setGps]=useState(null);
+  const [factForcee,setFactForcee]=useState(false);
   const [loading,setLoading]=useState(false);
   const [err,setErr]=useState('');
   const [step,setStep]=useState(1);
@@ -1172,11 +1200,23 @@ export function NouveauChantierClient({ go, onLogout, isAdmin }) {
   const addPhotos=e=>setPhotos(p=>[...p,...Array.from(e.target.files)]);
   const removePhoto=i=>setPhotos(p=>p.filter((_,j)=>j!==i));
 
+  // Sans adresse, le point GPS la remplace ; la facturation doit alors être une vraie adresse postale.
+  // L'adresse éventuellement tapée est conservée (non envoyée en mode GPS) pour un retour sans perte.
+  const basculerGps=()=>{
+    if (!gpsMode) {
+      setGpsMode(true);
+      if (factType==='identique') { setFactType('differente'); setFactForcee(true); if(!factReference) setFactReference(form.reference_client); }
+    } else {
+      setGpsMode(false); setGps(null);
+      if (factForcee) { setFactType('identique'); setFactForcee(false); }
+    }
+  };
+  const adresseChantier = gpsMode ? (gps?libelleGps(gps):'') : form.adresse;
   const adresseFact = factType==='identique'
     ? [form.adresse,form.code_postal,form.commune].filter(Boolean).join(', ')
     : [factAdresse,factCp,factCommune].filter(Boolean).join(', ');
   const dureeFinal = dureeMontant ? `${dureeMontant} ${dureeUnite}` : '';
-  const canStep2 = form.adresse&&form.commune&&form.puissance_demandee&&form.puissance_type
+  const canStep2 = adresseChantier&&form.commune&&form.puissance_demandee&&form.puissance_type
     &&form.date_debut_chantier&&dureeMontant&&form.terrain_viabilise&&form.reference_client.trim()
     &&(factType==='identique'||(factAdresse&&factCommune&&factReference.trim()));
   const canSubmit=CAT_REQUIRED.every(k=>docs[k]);
@@ -1192,7 +1232,9 @@ export function NouveauChantierClient({ go, onLogout, isAdmin }) {
         facturation_telephone: factType==='differente'?factTelephone:'',
         facturation_email: factType==='differente'?factEmail:'',
         mandat_fourni: !!docs.mandat,
-        commentaire: commentaire.trim()
+        commentaire: commentaire.trim(),
+        adresse: gpsMode?'':form.adresse,
+        gps_lat: gpsMode&&gps?gps.lat:null, gps_lng: gpsMode&&gps?gps.lng:null
       }});
       // Upload docs
       for (const [cat,file] of Object.entries(docs)) {
@@ -1263,12 +1305,20 @@ export function NouveauChantierClient({ go, onLogout, isAdmin }) {
               placeholder="Société ou nom du client"/>
           </div>
           <div>
-            <label style={labelSt}>Adresse du chantier *</label>
-            <AddressAutocomplete value={form.adresse}
-              onChange={v=>setForm(f=>({...f,adresse:v}))}
-              onSelect={a=>setForm(f=>({...f,adresse:a.adresse,
-                code_postal:a.code_postal||f.code_postal, commune:a.commune||f.commune}))}
-              inputStyle={inputSt} placeholder="ex. 12 rue des Acacias…"/>
+            <label style={labelSt}>{gpsMode?'Emplacement du chantier *':'Adresse du chantier *'}</label>
+            {gpsMode
+              ? <CarteGps value={gps} onChange={setGps} commune={form.commune} codePostal={form.code_postal}
+                  onLocalite={l=>setForm(f=>({...f,commune:l.commune||f.commune,code_postal:l.code_postal}))}/>
+              : <AddressAutocomplete value={form.adresse}
+                  onChange={v=>setForm(f=>({...f,adresse:v}))}
+                  onSelect={a=>setForm(f=>({...f,adresse:a.adresse,
+                    code_postal:a.code_postal||f.code_postal, commune:a.commune||f.commune}))}
+                  inputStyle={inputSt} placeholder="ex. 12 rue des Acacias…"/>}
+            <button type="button" onClick={basculerGps}
+              style={{marginTop:8,display:'inline-flex',alignItems:'center',gap:6,background:'none',border:'none',
+                padding:0,cursor:'pointer',color:'var(--jaune-deep)',fontFamily:'var(--font-head)',fontWeight:700,fontSize:13.5}}>
+              <Icon name="pin" size={15}/>{gpsMode?"J'ai une adresse : la saisir":"Pas encore d'adresse ? Placer un point sur la carte"}
+            </button>
           </div>
           <div className="fb-form2" style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:14}}>
             <div>
@@ -1293,9 +1343,12 @@ export function NouveauChantierClient({ go, onLogout, isAdmin }) {
             <select style={inputSt} value={factType}
               onChange={e=>{ const v=e.target.value; setFactType(v);
                 if(v==='differente'&&!factReference)setFactReference(form.reference_client); }}>
-              <option value="identique">Identique à l'adresse du chantier</option>
+              <option value="identique" disabled={gpsMode}>Identique à l'adresse du chantier</option>
               <option value="differente">Différente</option>
             </select>
+            {gpsMode&&<div style={{marginTop:5,fontSize:12.5,color:'var(--muted)'}}>
+              Chantier localisé par point GPS : indiquez une adresse postale de facturation.
+            </div>}
           </div>
           {factType==='differente'&&<>
             <div>
@@ -1456,7 +1509,7 @@ export function NouveauChantierClient({ go, onLogout, isAdmin }) {
         <SectionTitle icon="check">Récapitulatif</SectionTitle>
         <div style={{display:'grid',gap:10,marginBottom:20}}>
           {[
-            ['Adresse',`${form.adresse}, ${form.commune}${form.code_postal?' '+form.code_postal:''}`],
+            ['Adresse',`${adresseChantier}, ${form.commune}${form.code_postal?' '+form.code_postal:''}`],
             ['Adresse facturation',adresseFact],
             ['Puissance',`${form.puissance_demandee} kVA — ${form.puissance_type==='monophase'?'Monophasé':'Triphasé'}`],
             ['Terrain viabilisé',form.terrain_viabilise==='oui'?'Oui':'Non'],
@@ -1503,7 +1556,7 @@ export function NouveauChantierClient({ go, onLogout, isAdmin }) {
               try {
                 await downloadPdf('/api/client/mandat',{
                   reference: form.reference_client,
-                  adresse: [form.adresse, form.code_postal, form.commune].filter(Boolean).join(', '),
+                  adresse: [adresseChantier, form.code_postal, form.commune].filter(Boolean).join(', '),
                   ville: form.commune,
                 }, `Mandat-EDF-${(form.reference_client||'chantier').replace(/[^\w-]+/g,'_')}.pdf`);
               } catch(e){ setErr(e.message); }

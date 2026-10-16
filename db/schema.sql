@@ -124,6 +124,9 @@ CREATE TABLE fbelec.chantiers (
   facturation_telephone  text,
   facturation_email      text,
   commentaire            text,
+  gps_lat                double precision,
+  gps_lng                double precision,
+  vu_admin               boolean DEFAULT true NOT NULL,
   cree_par_client        boolean DEFAULT false NOT NULL
 );
 CREATE INDEX chantiers_client_id_idx ON fbelec.chantiers (client_id);
@@ -255,7 +258,7 @@ CREATE TRIGGER trg_fbelec_admins_upd     BEFORE UPDATE ON fbelec.admins         
 CREATE TRIGGER trg_fbelec_societes_upd   BEFORE UPDATE ON fbelec.societes        FOR EACH ROW EXECUTE PROCEDURE fbelec.set_updated_at();
 CREATE TRIGGER trg_fbelec_clients_upd    BEFORE UPDATE ON fbelec.clients         FOR EACH ROW EXECUTE PROCEDURE fbelec.set_updated_at();
 CREATE TRIGGER trg_fbelec_ref_etapes_upd BEFORE UPDATE ON fbelec.ref_etapes      FOR EACH ROW EXECUTE PROCEDURE fbelec.set_updated_at();
-CREATE TRIGGER trg_fbelec_chantiers_upd  BEFORE UPDATE ON fbelec.chantiers       FOR EACH ROW EXECUTE PROCEDURE fbelec.set_updated_at();
+CREATE TRIGGER trg_fbelec_chantiers_upd  BEFORE UPDATE ON fbelec.chantiers       FOR EACH ROW WHEN (OLD.vu_admin IS NOT DISTINCT FROM NEW.vu_admin) EXECUTE PROCEDURE fbelec.set_updated_at();
 CREATE TRIGGER trg_fbelec_etapes_upd     BEFORE UPDATE ON fbelec.chantier_etapes FOR EACH ROW EXECUTE PROCEDURE fbelec.set_updated_at();
 CREATE TRIGGER trg_fbelec_documents_upd  BEFORE UPDATE ON fbelec.documents       FOR EACH ROW EXECUTE PROCEDURE fbelec.set_updated_at();
 CREATE TRIGGER trg_fbelec_photos_upd     BEFORE UPDATE ON fbelec.photos          FOR EACH ROW EXECUTE PROCEDURE fbelec.set_updated_at();

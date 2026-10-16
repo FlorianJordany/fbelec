@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { apiFetch, chantierBadge, downloadFile, downloadPdf, CAT_LABELS, CAT_REQUIRED, DOC_OPTIONS } from './api.js';
+import { apiFetch, chantierBadge, downloadFile, downloadPdf, CAT_LABELS, CAT_REQUIRED, DOC_OPTIONS, libelleGps } from './api.js';
 import { Icon, Btn, StatusPill, Card, Field, SectionTitle, Toast, useToast,
-         ColFilter, SearchableSelect, Modal, AppHeader, AddressAutocomplete, Footer } from './ui.jsx';
+         ColFilter, SearchableSelect, Modal, AppHeader, AddressAutocomplete, CarteGps, GpsLinks, Footer } from './ui.jsx';
 import { Notes } from './client.jsx';
 
 // ─── Documents (admin) ───────────────────────────────────────
@@ -192,6 +192,7 @@ function ModalNouveauClient({ onClose, onCreated }) {
               borderRadius:"var(--r-input)",fontSize:15,fontFamily:"var(--font-body)",background:"#fff"}}>
             <option value="basic">Basic — voit ses chantiers</option>
             <option value="admin">Admin — voit toute la société</option>
+            <option value="suivi">Suivi — lit toute la société + e-mails</option>
           </select>
         </div>}
       </div>
@@ -225,6 +226,9 @@ export function AdminNouveauChantier({ go, openChantier, onLogout, isAdmin }) {
   const [docs,setDocs]=useState({permis_construire:null,plan_situation:null,plan_masse:null,mandat:null});
   const [photos,setPhotos]=useState([]);
   const [commentaire,setCommentaire]=useState('');
+  const [gpsMode,setGpsMode]=useState(false);
+  const [gps,setGps]=useState(null);
+  const [factForcee,setFactForcee]=useState(false);
   const [loading,setLoading]=useState(false);
   const [err,setErr]=useState('');
   const [step,setStep]=useState(1);
@@ -239,11 +243,23 @@ export function AdminNouveauChantier({ go, openChantier, onLogout, isAdmin }) {
   const addPhotos=e=>setPhotos(p=>[...p,...Array.from(e.target.files)]);
   const removePhoto=i=>setPhotos(p=>p.filter((_,j)=>j!==i));
 
+  // Sans adresse, le point GPS la remplace ; la facturation doit alors être une vraie adresse postale.
+  // L'adresse éventuellement tapée est conservée (non envoyée en mode GPS) pour un retour sans perte.
+  const basculerGps=()=>{
+    if (!gpsMode) {
+      setGpsMode(true);
+      if (factType==='identique') { setFactType('differente'); setFactForcee(true); if(!factReference) setFactReference(form.reference_client); }
+    } else {
+      setGpsMode(false); setGps(null);
+      if (factForcee) { setFactType('identique'); setFactForcee(false); }
+    }
+  };
+  const adresseChantier = gpsMode ? (gps?libelleGps(gps):'') : form.adresse;
   const adresseFact = factType==='identique'
     ? [form.adresse,form.code_postal,form.commune].filter(Boolean).join(', ')
     : [factAdresse,factCp,factCommune].filter(Boolean).join(', ');
   const dureeFinal = dureeMontant ? `${dureeMontant} ${dureeUnite}` : '';
-  const canStep2 = form.client_id&&form.adresse&&form.commune&&form.puissance_demandee&&form.puissance_type
+  const canStep2 = form.client_id&&adresseChantier&&form.commune&&form.puissance_demandee&&form.puissance_type
     &&form.date_debut_chantier&&dureeMontant&&form.terrain_viabilise&&form.reference_client.trim()
     &&(factType==='identique'||(factAdresse&&factCommune&&factReference.trim()));
   const canStep3 = CAT_REQUIRED.every(k=>docs[k]);
@@ -260,6 +276,8 @@ export function AdminNouveauChantier({ go, openChantier, onLogout, isAdmin }) {
         facturation_email: factType==='differente'?factEmail:'',
         mandat_fourni: !!docs.mandat,
         commentaire: commentaire.trim(),
+        adresse: gpsMode?'':form.adresse,
+        gps_lat: gpsMode&&gps?gps.lat:null, gps_lng: gpsMode&&gps?gps.lng:null,
       }});
       for (const [cat,file] of Object.entries(docs)) {
         if (!file) continue;
@@ -336,12 +354,20 @@ export function AdminNouveauChantier({ go, openChantier, onLogout, isAdmin }) {
               placeholder="Société ou nom du client"/>
           </div>
           <div>
-            <label style={labelSt}>Adresse du chantier *</label>
-            <AddressAutocomplete value={form.adresse}
-              onChange={v=>setForm(f=>({...f,adresse:v}))}
-              onSelect={a=>setForm(f=>({...f,adresse:a.adresse,
-                code_postal:a.code_postal||f.code_postal, commune:a.commune||f.commune}))}
-              inputStyle={inputSt} placeholder="ex. 12 rue des Acacias…"/>
+            <label style={labelSt}>{gpsMode?'Emplacement du chantier *':'Adresse du chantier *'}</label>
+            {gpsMode
+              ? <CarteGps value={gps} onChange={setGps} commune={form.commune} codePostal={form.code_postal}
+                  onLocalite={l=>setForm(f=>({...f,commune:l.commune||f.commune,code_postal:l.code_postal}))}/>
+              : <AddressAutocomplete value={form.adresse}
+                  onChange={v=>setForm(f=>({...f,adresse:v}))}
+                  onSelect={a=>setForm(f=>({...f,adresse:a.adresse,
+                    code_postal:a.code_postal||f.code_postal, commune:a.commune||f.commune}))}
+                  inputStyle={inputSt} placeholder="ex. 12 rue des Acacias…"/>}
+            <button type="button" onClick={basculerGps}
+              style={{marginTop:8,display:'inline-flex',alignItems:'center',gap:6,background:'none',border:'none',
+                padding:0,cursor:'pointer',color:'var(--jaune-deep)',fontFamily:'var(--font-head)',fontWeight:700,fontSize:13.5}}>
+              <Icon name="pin" size={15}/>{gpsMode?"J'ai une adresse : la saisir":"Pas encore d'adresse ? Placer un point sur la carte"}
+            </button>
           </div>
           <div className="fb-form2" style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:14}}>
             <div><label style={labelSt}>Commune *</label>
@@ -362,9 +388,12 @@ export function AdminNouveauChantier({ go, openChantier, onLogout, isAdmin }) {
             <select style={inputSt} value={factType}
               onChange={e=>{ const v=e.target.value; setFactType(v);
                 if(v==='differente'&&!factReference)setFactReference(form.reference_client); }}>
-              <option value="identique">Identique à l'adresse du chantier</option>
+              <option value="identique" disabled={gpsMode}>Identique à l'adresse du chantier</option>
               <option value="differente">Différente</option>
             </select>
+            {gpsMode&&<div style={{marginTop:5,fontSize:12.5,color:'var(--muted)'}}>
+              Chantier localisé par point GPS : indiquez une adresse postale de facturation.
+            </div>}
           </div>
           {factType==='differente'&&<>
             <div>
@@ -515,7 +544,7 @@ export function AdminNouveauChantier({ go, openChantier, onLogout, isAdmin }) {
           {[
             ['Client',clients.find(c=>String(c.id)===String(form.client_id))?.nom||'—'],
             ['Référence',form.reference_client||'—'],
-            ['Adresse',`${form.adresse}, ${form.commune}${form.code_postal?' '+form.code_postal:''}`],
+            ['Adresse',`${adresseChantier}, ${form.commune}${form.code_postal?' '+form.code_postal:''}`],
             ['Adresse facturation',adresseFact],
             ['Puissance',`${form.puissance_demandee} kVA — ${form.puissance_type==='monophase'?'Monophasé':'Triphasé'}`],
             ['Terrain viabilisé',form.terrain_viabilise==='oui'?'Oui':'Non'],
@@ -562,7 +591,7 @@ export function AdminNouveauChantier({ go, openChantier, onLogout, isAdmin }) {
               try {
                 await downloadPdf('/api/admin/chantiers/mandat',{
                   reference: form.reference_client,
-                  adresse: [form.adresse, form.code_postal, form.commune].filter(Boolean).join(', '),
+                  adresse: [adresseChantier, form.code_postal, form.commune].filter(Boolean).join(', '),
                   ville: form.commune,
                 }, `Mandat-EDF-${(form.reference_client||'chantier').replace(/[^\w-]+/g,'_')}.pdf`);
               } catch(e){ setErr(e.message); }
@@ -640,9 +669,11 @@ export function AdminList({ go, openChantier, onLogout, isAdmin }) {
     if (filtres.statut && (c.etape_courante||'—')!==filtres.statut) return false;
     return true;
   }).sort((a,b)=>{
-    // Tri par défaut sur la société (comptes sans société en dernier), puis client.
+    // Nouveaux chantiers clients (jamais ouverts) épinglés en haut ;
+    // ensuite tri par société (comptes sans société en dernier), puis client.
+    const na=a.vu_admin===false?0:1, nb=b.vu_admin===false?0:1;
     const sa=a.societe_nom||'￿', sb=b.societe_nom||'￿';
-    return sa.localeCompare(sb,'fr') || (a.client_nom||'').localeCompare(b.client_nom||'','fr');
+    return na-nb || sa.localeCompare(sb,'fr') || (a.client_nom||'').localeCompare(b.client_nom||'','fr');
   });
 
   if (loading) return <div style={{minHeight:"100vh",background:"var(--bg-soft)",display:"flex",flexDirection:"column"}}>
@@ -702,12 +733,15 @@ export function AdminList({ go, openChantier, onLogout, isAdmin }) {
           const done=parseInt(c.etapes_done)||0;
           const pct=total>0?Math.round((done/total)*100):0;
           const etapeNum=done<total?done+1:null;
+          const nouveau=c.vu_admin===false;
+          const fond=nouveau?"color-mix(in srgb,var(--jaune) 14%,#fff)":"";
           return <div key={c.id} className="fb-ch-row" style={{display:"grid",gridTemplateColumns:"2fr 1.2fr 1fr 1.3fr 1fr auto",
             gap:12,alignItems:"center",padding:"12px 16px",borderBottom:"1px solid var(--line)",
-            cursor:"pointer",transition:"background .12s"}}
+            cursor:"pointer",transition:"background .12s",background:fond,
+            boxShadow:nouveau?"inset 4px 0 0 var(--jaune-deep)":undefined}}
             onClick={()=>openChantier(c.id)}
             onMouseEnter={e=>e.currentTarget.style.background="var(--bg-soft)"}
-            onMouseLeave={e=>e.currentTarget.style.background=""}>
+            onMouseLeave={e=>e.currentTarget.style.background=fond}>
             {/* Chantier */}
             <span>
               <div style={{display:"flex",alignItems:"center",gap:10}}>
@@ -718,6 +752,7 @@ export function AdminList({ go, openChantier, onLogout, isAdmin }) {
                       display:"grid",placeItems:"center",flex:"0 0 auto"}}>
                      <Icon name="camera" size={17} style={{color:"var(--muted)"}}/></div>}
                 <div style={{minWidth:0}}>
+                  {nouveau&&<span className="fb-badge-new" style={{marginBottom:3}}>Nouveau</span>}
                   {c.reference_client&&<div style={{fontFamily:"var(--font-head)",fontSize:13.5,color:"#000",fontWeight:700,
                     whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{c.reference_client}</div>}
                   <div style={{fontFamily:"var(--font-head)",fontWeight:500,fontSize:12.5,color:"var(--slate)",
@@ -926,6 +961,7 @@ export function AdminChantier({ chantierId, go, onLogout, isAdmin }) {
               ["Client", c.client_nom],
               ["Référence client", c.reference_client],
               ["Adresse du chantier", [c.adresse, c.code_postal, c.commune].filter(Boolean).join(', ')],
+              ["Localisation GPS", c.gps_lat!=null&&c.gps_lng!=null?<GpsLinks lat={c.gps_lat} lng={c.gps_lng}/>:null],
               ["Adresse de facturation", c.adresse_facturation],
               ["Référence facturation", c.reference_facturation],
               ["Téléphone facturation", c.facturation_telephone],
@@ -1329,6 +1365,7 @@ function ModalEditClient({ client, onClose, onSaved }) {
               borderRadius:"var(--r-input)",fontSize:15,fontFamily:"var(--font-body)",background:"#fff"}}>
             <option value="basic">Basic — voit ses chantiers</option>
             <option value="admin">Admin — voit toute la société</option>
+            <option value="suivi">Suivi — lit toute la société + e-mails</option>
           </select>
         </div>}
       </div>
@@ -1395,6 +1432,8 @@ export function AdminSocietes({ go, onLogout, isAdmin }) {
       await apiFetch(`/api/admin/clients/${client.id}`,{method:'PUT',body:{role_societe:role}});
       reload(); showToast(role==='admin'
         ?`${client.nom} est admin — il voit tous les chantiers de la société ✓`
+        :role==='suivi'
+        ?`${client.nom} est en suivi — il consulte tous les chantiers de la société et reçoit leurs e-mails ✓`
         :`${client.nom} est basic — il ne voit que ses chantiers ✓`);
     } catch(e){showToast(e.message,"error");}
   };
@@ -1411,7 +1450,8 @@ export function AdminSocietes({ go, onLogout, isAdmin }) {
         <h1 style={{margin:"12px 0 4px",fontFamily:"var(--font-display)",fontWeight:700,fontSize:36,
           textTransform:"uppercase",color:"var(--ink)"}}>Sociétés</h1>
         <p style={{margin:0,color:"var(--slate)",fontSize:15}}>
-          Regroupez vos comptes clients par société. Un compte « Admin » voit tous les chantiers de sa société.
+          Regroupez vos comptes clients par société. Un compte « Admin » voit et gère tous les chantiers de sa société ;
+          un compte « Suivi » les consulte en lecture seule et reçoit toutes leurs notifications e-mail.
         </p>
       </div>
 
@@ -1492,6 +1532,7 @@ export function AdminSocietes({ go, onLogout, isAdmin }) {
                 fontSize:13,fontFamily:"var(--font-body)",color:"var(--ink)",background:"#fff",cursor:"pointer",maxWidth:180}}>
               <option value="basic">Basic — ses chantiers</option>
               <option value="admin">Admin — toute la société</option>
+              <option value="suivi">Suivi — lecture + e-mails</option>
             </select>
           </div>)}
         </div>
@@ -1602,6 +1643,7 @@ export function AdminClients({ go, onLogout, isAdmin }) {
         <select value={filtreRole} onChange={e=>setFiltreRole(e.target.value)} style={filStyle}>
           <option value="">Tous les rôles</option>
           <option value="admin">Admin société</option>
+          <option value="suivi">Suivi société</option>
           <option value="basic">Basic</option>
         </select>
       </div>
@@ -1636,7 +1678,8 @@ export function AdminClients({ go, onLogout, isAdmin }) {
           <div style={{minWidth:0}}>
             {c.societe_nom
               ? <><div style={{fontSize:13.5,color:"var(--ink)",fontWeight:600,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{c.societe_nom}</div>
-                  {c.role_societe==='admin'&&<div style={{fontSize:11.5,color:"var(--jaune-deep)",fontWeight:700}}>Admin société</div>}</>
+                  {c.role_societe==='admin'&&<div style={{fontSize:11.5,color:"var(--jaune-deep)",fontWeight:700}}>Admin société</div>}
+                  {c.role_societe==='suivi'&&<div style={{fontSize:11.5,color:"var(--slate)",fontWeight:700}}>Suivi société</div>}</>
               : <span style={{fontSize:13.5,color:"var(--muted)"}}>—</span>}
           </div>
           <div style={{fontSize:13.5,color:"var(--slate)"}}>{c.nb_chantiers} chantier(s)</div>
