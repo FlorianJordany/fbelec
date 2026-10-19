@@ -6,7 +6,7 @@ import authClient from '../../middleware/authClient.js';
 import { toPublicUrl, uploadDoc, uploadPhotos } from '../../middleware/upload.js';
 import { str, gps, libelleGps } from '../../utils/validate.js';
 import { sendContactClient, sendNouveauChantierAdmin, sendMessageCollegue } from '../../services/mailer.js';
-import { destinatairesAbonnes } from '../../services/abonnes.js';
+import { destinatairesAbonnes, membresAbonnes, lireClientIds, remplacerAbonnes, INT_MAX } from '../../services/abonnes.js';
 import { genererMandat, genererMandatFichier } from '../../services/mandat.js';
 
 const router = Router();
@@ -14,8 +14,9 @@ router.use(authClient);
 
 // ── Visibilité société ────────────────────────────────────────
 // 'basic' : ses propres chantiers (lecture + écriture).
-// 'admin' : lecture + écriture sur les chantiers de TOUS les comptes de sa société, et choix,
-//           chantier par chantier, des collègues abonnés aux notifications.
+// 'admin' : lecture + écriture sur les chantiers de TOUS les comptes de sa société.
+// Créateur du chantier, admin de la société (ou FB ELEC) : choix, chantier par chantier, des
+//           collègues abonnés aux notifications.
 // Abonné (fbelec.chantier_abonnes) : consultation seule du chantier, tant qu'il appartient
 //           à la société du propriétaire.
 // Renvoie { ecriture, societeId, admin } — ecriture : client_id modifiables (toujours >= [soi]).
@@ -111,20 +112,11 @@ router.get('/chantiers/:id', async (req, res, next) => {
     // Interface : masque les actions de modification (le backend les refuse de toute façon).
     chantier.peut_modifier = acces.ecriture.includes(chantier.client_id);
 
-    // Admin de la société du propriétaire : membres actifs + abonnés aux notifications.
-    if (acces.admin) {
-      const { rows: membres } = await pool.query(
-        `SELECT m.id, m.nom, m.email, (a.client_id IS NOT NULL) AS abonne
-           FROM fbelec.clients p
-           JOIN fbelec.clients m ON m.societe_id = p.societe_id AND m.actif = TRUE
-           LEFT JOIN fbelec.chantier_abonnes a ON a.chantier_id = $2 AND a.client_id = m.id
-          WHERE p.id = $1 AND p.societe_id = $3
-          ORDER BY m.nom`,
-        [chantier.client_id, chantierId, acces.societeId]
-      );
-      if (membres.length) {
-        chantier.abonnes_gestion = membres.map(m => ({ ...m, proprietaire: m.id === chantier.client_id }));
-      }
+    // Créateur du chantier ou admin de la société : membres actifs + abonnés aux notifications.
+    // (Un admin ne voit que des chantiers de sa société : VISIBLE ci-dessus.)
+    if (chantier.client_id === req.clientId || acces.admin) {
+      const membres = await membresAbonnes(chantierId, chantier.client_id);
+      if (membres.length) chantier.abonnes_gestion = membres;
     }
 
     const { rows: etapes } = await pool.query(
@@ -167,20 +159,17 @@ router.get('/chantiers/:id', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-// PUT /api/client/chantiers/:id/abonnes — l'admin de la société choisit les collègues qui
-// reçoivent les notifications de ce chantier. Corps : { client_ids: [entiers] } (remplace la liste).
+// PUT /api/client/chantiers/:id/abonnes — le créateur du chantier ou l'admin de la société choisit
+// les collègues qui reçoivent les notifications de ce chantier. Corps : { client_ids: [entiers] }
+// (remplace la liste).
 router.put('/chantiers/:id/abonnes', async (req, res, next) => {
   try {
-    const INT_MAX = 2147483647; // borne du type integer PostgreSQL
     const chantierId = parseInt(req.params.id, 10);
     if (!Number.isInteger(chantierId) || chantierId <= 0 || chantierId > INT_MAX) {
       return res.status(404).json({ error: 'Chantier introuvable.' });
     }
-    const ids = req.body?.client_ids;
-    if (!Array.isArray(ids) || ids.length > 500 || !ids.every(v => Number.isInteger(v) && v > 0 && v <= INT_MAX)) {
-      return res.status(400).json({ error: 'Liste de collaborateurs invalide.' });
-    }
-    const choisis = [...new Set(ids)];
+    const choisis = lireClientIds(req.body);
+    if (!choisis) return res.status(400).json({ error: 'Liste de collaborateurs invalide.' });
     const acces = await accesSociete(req.clientId);
     const { rows: [c] } = await pool.query(
       `SELECT c.id, c.client_id, p.societe_id
@@ -189,34 +178,13 @@ router.put('/chantiers/:id/abonnes', async (req, res, next) => {
       [chantierId, acces.ecriture, req.clientId]
     );
     if (!c) return res.status(404).json({ error: 'Chantier introuvable.' });
-    if (!acces.admin || !c.societe_id || c.societe_id !== acces.societeId) {
-      return res.status(403).json({ error: "Seul l'administrateur de la société peut choisir les destinataires." });
+    const gere = c.client_id === req.clientId || (acces.admin && c.societe_id === acces.societeId);
+    if (!c.societe_id || !gere) {
+      return res.status(403).json({ error: "Seul le créateur du chantier ou l'administrateur de la société peut choisir les destinataires." });
     }
-    // Uniquement des membres actifs de la société, hors propriétaire (toujours notifié).
-    const { rows: valides } = await pool.query(
-      'SELECT id FROM fbelec.clients WHERE id = ANY($1::int[]) AND societe_id = $2 AND actif = TRUE AND id <> $3',
-      [choisis, c.societe_id, c.client_id]
-    );
-    if (valides.length !== choisis.length) {
+    if (!await remplacerAbonnes(chantierId, c.client_id, c.societe_id, choisis)) {
       return res.status(400).json({ error: 'Collaborateur hors de la société, inactif ou propriétaire du chantier.' });
     }
-    const db = await pool.connect();
-    try {
-      await db.query('BEGIN');
-      // Verrou : deux enregistrements simultanés de la liste s'exécutent l'un après l'autre.
-      await db.query('SELECT 1 FROM fbelec.chantiers WHERE id = $1 FOR NO KEY UPDATE', [chantierId]);
-      await db.query('DELETE FROM fbelec.chantier_abonnes WHERE chantier_id = $1', [chantierId]);
-      if (choisis.length) {
-        await db.query(
-          'INSERT INTO fbelec.chantier_abonnes (chantier_id, client_id) SELECT $1, unnest($2::int[])',
-          [chantierId, choisis]
-        );
-      }
-      await db.query('COMMIT');
-    } catch (err) {
-      await db.query('ROLLBACK');
-      throw err;
-    } finally { db.release(); }
     res.json({ ok: true, client_ids: choisis });
   } catch (err) { next(err); }
 });

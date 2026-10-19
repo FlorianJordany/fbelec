@@ -831,9 +831,10 @@ function Documents({ documents, showStatut=false }) {
   </div>;
 }
 
-// ── Notifications du chantier (admin de la société) ───────────
+// ── Notifications du chantier (créateur, admin de la société, FB ELEC) ──
 // Collègues abonnés : reçoivent les e-mails du chantier et peuvent le consulter (lecture seule).
-function NotificationsChantier({ chantierId, membres, reload, showToast }) {
+// admin : fiche FB ELEC (route admin) ; sansSociete : client rattaché à aucune société.
+export function NotificationsChantier({ chantierId, membres, reload, showToast, admin=false, sansSociete=false }) {
   const initial=membres.filter(m=>m.abonne&&!m.proprietaire).map(m=>m.id);
   const [choix,setChoix]=useState(initial);
   const [saving,setSaving]=useState(false);
@@ -846,7 +847,7 @@ function NotificationsChantier({ chantierId, membres, reload, showToast }) {
   const enregistrer=async()=>{
     setSaving(true);
     try {
-      await apiFetch(`/api/client/chantiers/${chantierId}/abonnes`,{method:'PUT',body:{client_ids:choix}});
+      await apiFetch(`/api/${admin?'admin':'client'}/chantiers/${chantierId}/abonnes`,{method:'PUT',body:{client_ids:choix}});
       showToast('Destinataires des notifications enregistrés ✓'); reload();
     } catch(e){ showToast(e.message,'error'); }
     finally{ setSaving(false); }
@@ -854,7 +855,7 @@ function NotificationsChantier({ chantierId, membres, reload, showToast }) {
   return <Card>
     <SectionTitle icon="mail">Notifications du chantier</SectionTitle>
     <p style={{margin:'0 0 12px',fontSize:13.5,color:'var(--slate)',lineHeight:1.5}}>
-      Collègues qui reçoivent les e-mails de ce chantier (étapes, messages) et peuvent le consulter.
+      {admin?'Collègues du client (même société)':'Collègues'} qui reçoivent les e-mails de ce chantier (étapes, messages) et peuvent le consulter.
     </p>
     <div style={{display:'grid',gap:8}}>
       {membres.map(m=><label key={m.id} style={{display:'flex',alignItems:'center',gap:10,padding:'9px 12px',minWidth:0,
@@ -865,13 +866,16 @@ function NotificationsChantier({ chantierId, membres, reload, showToast }) {
         <span style={{flex:1,minWidth:0}}>
           <span style={{display:'block',fontWeight:600,fontSize:14,color:'var(--ink)',overflowWrap:'anywhere'}}>{m.nom}</span>
           <span style={{display:'block',fontSize:12.5,color:'var(--muted)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
-            {m.proprietaire?'Créateur du chantier — toujours notifié':m.email}
+            {m.proprietaire?(admin?'Client du chantier':'Créateur du chantier')+' — toujours notifié':m.email}
           </span>
         </span>
       </label>)}
     </div>
     {autres.length===0
-      ? <p style={{margin:'10px 0 0',fontSize:13,color:'var(--muted)'}}>Aucun autre membre actif dans votre société.</p>
+      ? <p style={{margin:membres.length?'10px 0 0':0,fontSize:13,color:'var(--muted)'}}>
+          {sansSociete?"Ce client n'est rattaché à aucune société : rattachez-le à une société (page Clients) pour notifier ses collègues."
+            :admin?'Aucun autre membre actif dans la société du client.':'Aucun autre membre actif dans votre société.'}
+        </p>
       : <div style={{marginTop:12,display:'flex',justifyContent:'flex-end'}}>
           <Btn variant="dark" size="sm" icon="check" disabled={!modifie||saving} onClick={enregistrer}>
             {saving?'Enregistrement…':'Enregistrer'}

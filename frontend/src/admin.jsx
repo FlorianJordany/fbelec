@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { apiFetch, chantierBadge, downloadFile, downloadPdf, CAT_LABELS, CAT_REQUIRED, DOC_OPTIONS, libelleGps } from './api.js';
 import { Icon, Btn, StatusPill, Card, Field, SectionTitle, Toast, useToast,
          ColFilter, SearchableSelect, Modal, AppHeader, AddressAutocomplete, CarteGps, GpsLinks, Footer } from './ui.jsx';
-import { Notes } from './client.jsx';
+import { Notes, NotificationsChantier } from './client.jsx';
 
 // ─── Documents (admin) ───────────────────────────────────────
 function AdminDocumentsSection({ chantierId, docs, reload, showToast }) {
@@ -1120,6 +1120,10 @@ export function AdminChantier({ chantierId, go, onLogout, isAdmin }) {
             <Notes notes={c.notes.slice(0,5)}/>
           </div>}
         </Card>
+
+        {/* Collègues du client abonnés aux notifications */}
+        <NotificationsChantier key={chantierId} admin chantierId={chantierId} membres={c.abonnes_gestion||[]}
+          sansSociete={!c.client_societe_id} reload={reload} showToast={showToast}/>
       </div>
     </main>
     <Footer/>
@@ -1446,8 +1450,8 @@ export function AdminSocietes({ go, onLogout, isAdmin }) {
         <h1 style={{margin:"12px 0 4px",fontFamily:"var(--font-display)",fontWeight:700,fontSize:36,
           textTransform:"uppercase",color:"var(--ink)"}}>Sociétés</h1>
         <p style={{margin:0,color:"var(--slate)",fontSize:15}}>
-          Regroupez vos comptes clients par société. Un compte « Admin » voit et gère tous les chantiers de sa société,
-          et choisit sur chaque chantier les collègues qui en reçoivent les notifications.
+          Regroupez vos comptes clients par société. Un compte « Admin » voit et gère tous les chantiers de sa société.
+          Sur chaque chantier, son créateur, l'admin de la société ou FB ELEC choisit les collègues qui en reçoivent les notifications.
         </p>
       </div>
 

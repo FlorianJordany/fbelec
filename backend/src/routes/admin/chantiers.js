@@ -3,7 +3,7 @@ import fs from 'fs';
 import { pool } from '../../db.js';
 import { toPublicUrl } from '../../middleware/upload.js';
 import { sendEtapeAvancement } from '../../services/mailer.js';
-import { destinatairesAbonnes } from '../../services/abonnes.js';
+import { destinatairesAbonnes, membresAbonnes, lireClientIds, remplacerAbonnes, INT_MAX } from '../../services/abonnes.js';
 import { genererMandat, genererMandatFichier } from '../../services/mandat.js';
 import { str, gps, libelleGps } from '../../utils/validate.js';
 
@@ -57,10 +57,12 @@ router.get('/', async (req, res, next) => {
 router.get('/:id', async (req, res, next) => {
   try {
     const { rows: [chantier] } = await pool.query(
-      `SELECT c.*, cl.nom AS client_nom, cl.email AS client_email
+      `SELECT c.*, cl.nom AS client_nom, cl.email AS client_email, cl.societe_id AS client_societe_id
        FROM fbelec.chantiers c JOIN fbelec.clients cl ON cl.id = c.client_id
        WHERE c.id = $1`, [req.params.id]);
     if (!chantier) return res.status(404).json({ error: 'Chantier introuvable.' });
+    // Collègues du client (même société) et leur abonnement aux notifications de ce chantier.
+    chantier.abonnes_gestion = await membresAbonnes(chantier.id, chantier.client_id);
 
     // Première ouverture par FB ELEC d'un chantier créé par un client → retire le badge « Nouveau ».
     if (chantier.vu_admin === false) {
@@ -293,6 +295,33 @@ router.put('/:id/etapes', async (req, res, next) => {
     }
   } catch (err) { await client.query('ROLLBACK'); next(err); }
   finally { client.release(); }
+});
+
+// PUT /api/admin/chantiers/:id/abonnes — FB ELEC choisit les collègues du client (même société)
+// qui reçoivent les notifications de ce chantier. Corps : { client_ids: [entiers] } (remplace la liste).
+router.put('/:id/abonnes', async (req, res, next) => {
+  try {
+    const chantierId = parseInt(req.params.id, 10);
+    if (!Number.isInteger(chantierId) || chantierId <= 0 || chantierId > INT_MAX) {
+      return res.status(404).json({ error: 'Chantier introuvable.' });
+    }
+    const choisis = lireClientIds(req.body);
+    if (!choisis) return res.status(400).json({ error: 'Liste de collaborateurs invalide.' });
+    const { rows: [c] } = await pool.query(
+      `SELECT c.client_id, p.societe_id
+         FROM fbelec.chantiers c JOIN fbelec.clients p ON p.id = c.client_id
+        WHERE c.id = $1`,
+      [chantierId]
+    );
+    if (!c) return res.status(404).json({ error: 'Chantier introuvable.' });
+    if (!c.societe_id) {
+      return res.status(400).json({ error: "Le client n'est rattaché à aucune société." });
+    }
+    if (!await remplacerAbonnes(chantierId, c.client_id, c.societe_id, choisis)) {
+      return res.status(400).json({ error: 'Collaborateur hors de la société, inactif ou propriétaire du chantier.' });
+    }
+    res.json({ ok: true, client_ids: choisis });
+  } catch (err) { next(err); }
 });
 
 // POST /api/admin/chantiers/:id/avancer

@@ -217,7 +217,7 @@ export async function sendMessageCollegue({ nom, email, auteurNom, chantierNom, 
           <p style="margin:28px 0 0;font-size:13px;color:#98a0a9">
             ${pourProprietaire
               ? 'Vous recevez cet e-mail car vous êtes le créateur de ce chantier.'
-              : "Vous recevez cet e-mail car l'administrateur de votre société vous a ajouté aux notifications de ce chantier."}
+              : 'Vous recevez cet e-mail car vous avez été ajouté aux notifications de ce chantier.'}
           </p>
         </div>
       </div>

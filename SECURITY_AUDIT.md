@@ -257,6 +257,27 @@ open redirect (navigation interne, `?chantier=` casté en entier), secrets front
   `frontend/src/admin.jsx`, `frontend/src/client.jsx`. `node --check` OK ; build OK ; formulaire
   client vérifié en preview (2 champs Référence, bascule facturation, 0 erreur).
 
+## 20. Abonnés gérés aussi par le créateur du chantier et par FB ELEC (2026-10-19)
+
+- **Qui choisit les abonnés** : le **créateur** du chantier (propriétaire, même Basic), l'**admin
+  de sa société**, et **FB ELEC** sur tous les chantiers. Une seule liste par chantier : chacun
+  peut la modifier entièrement.
+- Client (`PUT /api/client/chantiers/:id/abonnes`) : autorisé si demandeur = propriétaire, ou admin
+  de la même société que le propriétaire ; propriétaire sans société → 403 ; abonné non créateur
+  → 403 ; chantier non visible → 404. `abonnes_gestion` renvoyé au créateur et à l'admin.
+- Admin (`PUT /api/admin/chantiers/:id/abonnes`, `authAdmin`) : mêmes validations (ids entiers ≤ 500
+  et ≤ INT_MAX, membres **actifs** de la société du client, propriétaire exclu) ; client sans
+  société → 400 ; id invalide/inexistant → 404. `GET /api/admin/chantiers/:id` renvoie
+  `abonnes_gestion` et `client_societe_id`.
+- Validation et écriture factorisées dans `services/abonnes.js` (`lireClientIds`,
+  `remplacerAbonnes` en transaction avec verrou, `membresAbonnes`) : mêmes règles des deux côtés.
+- **Anciens chantiers** : aucune condition de date ni d'archivage ; un abonné voit un chantier
+  archivé dans ses « Chantiers archivés », en consultation seule.
+- E-mails : mention neutre « vous avez été ajouté aux notifications de ce chantier ».
+- **Tests** : code exact des routes client + admin et du service sur PGlite → 40/40 OK (créateur,
+  admin société, FB ELEC, client sans société, chantier archivé, refus 400/403/404, sortie de
+  société). UI admin vérifiée desktop + 375 px (enregistrement, cas sans société).
+
 ## 19. Abonnés aux notifications par chantier — remplace le rôle « Suivi » (2026-10-19)
 
 - **Rôle « suivi » retiré** (décision produit) : `role_societe` ∈ `basic` | `admin` (liste
