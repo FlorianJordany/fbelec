@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { pool } from '../../db.js';
 import { sendNouvelleNote } from '../../services/mailer.js';
-import { destinatairesSuivi } from '../../services/suivi.js';
+import { destinatairesAbonnes } from '../../services/abonnes.js';
 
 const router = Router();
 
@@ -31,10 +31,10 @@ router.post('/chantiers/:id/notes', async (req, res, next) => {
         };
         if (row.client_email) sendNouvelleNote({ nom: row.client_nom, email: row.client_email, ...commun })
           .catch(e => console.error('[mailer] note:', e.message));
-        // Comptes « suivi » de la société (hors propriétaire, déjà prévenu).
-        for (const s of await destinatairesSuivi(req.params.id, [row.client_id])) {
-          sendNouvelleNote({ nom: s.nom, email: s.email, ...commun, pourSuivi: true })
-            .catch(e => console.error('[mailer] note (suivi):', e.message));
+        // Collègues abonnés à ce chantier (hors propriétaire, déjà prévenu).
+        for (const s of await destinatairesAbonnes(req.params.id, [row.client_id])) {
+          sendNouvelleNote({ nom: s.nom, email: s.email, ...commun, pourAbonne: true })
+            .catch(e => console.error('[mailer] note (abonné):', e.message));
         }
       }).catch(e => console.error('[mailer] note:', e.message));
     }

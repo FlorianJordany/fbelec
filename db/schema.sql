@@ -179,6 +179,15 @@ CREATE TABLE fbelec.photos (
 CREATE INDEX photos_chantier_id_visible_client_ordre_idx
   ON fbelec.photos (chantier_id, visible_client, ordre);
 
+-- Collègues abonnés aux notifications d'un chantier (choisis par l'admin de la société).
+CREATE TABLE fbelec.chantier_abonnes (
+  chantier_id integer NOT NULL REFERENCES fbelec.chantiers(id) ON DELETE CASCADE,
+  client_id   integer NOT NULL REFERENCES fbelec.clients(id)   ON DELETE CASCADE,
+  created_at  timestamptz DEFAULT now() NOT NULL,
+  PRIMARY KEY (chantier_id, client_id)
+);
+CREATE INDEX chantier_abonnes_client_idx ON fbelec.chantier_abonnes (client_id);
+
 CREATE TABLE fbelec.notes (
   id             serial PRIMARY KEY,
   chantier_id    integer NOT NULL REFERENCES fbelec.chantiers(id) ON DELETE CASCADE,

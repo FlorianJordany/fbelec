@@ -104,8 +104,8 @@ export async function sendEtapeEnCours({ nom, email, chantierNom, etapeLabel, ch
   });
 }
 
-// pourSuivi : destinataire au rôle « suivi » (chantier d'un collègue) → formulation adaptée.
-export async function sendEtapeAvancement({ nom, email, chantierNom, referenceClient, etapeLabel, etatLabel, chantierId, pourSuivi = false }) {
+// pourAbonne : collègue abonné aux notifications de ce chantier → formulation adaptée.
+export async function sendEtapeAvancement({ nom, email, chantierNom, referenceClient, etapeLabel, etatLabel, chantierId, pourAbonne = false }) {
   if (!process.env.SMTP_HOST) {
     console.warn('[mailer] SMTP non configuré — email non envoyé à', email);
     return;
@@ -124,7 +124,7 @@ export async function sendEtapeAvancement({ nom, email, chantierNom, referenceCl
         <div style="padding:32px;border:1px solid #e9ebee;border-top:none">
           <h2 style="margin:0 0 16px;font-size:20px;color:#20242a">Bonjour ${esc(nom)},</h2>
           <p style="color:#5c656f;line-height:1.6;margin:0 0 20px">
-            L'avancement ${pourSuivi ? 'du' : 'de votre'} chantier <strong style="color:#20242a">${esc(chantierNom)}</strong>${referenceClient ? ` (réf. <strong style="color:#20242a">${esc(referenceClient)}</strong>)` : ''}${pourSuivi ? ' de votre société' : ''} a été mis à jour :
+            L'avancement ${pourAbonne ? 'du' : 'de votre'} chantier <strong style="color:#20242a">${esc(chantierNom)}</strong>${referenceClient ? ` (réf. <strong style="color:#20242a">${esc(referenceClient)}</strong>)` : ''}${pourAbonne ? ' de votre société' : ''} a été mis à jour :
           </p>
           <div style="background:#f5f6f8;border-left:4px solid #F5C518;border-radius:0 10px 10px 0;
             padding:18px 22px;margin-bottom:28px">
@@ -145,7 +145,7 @@ export async function sendEtapeAvancement({ nom, email, chantierNom, referenceCl
   });
 }
 
-export async function sendNouvelleNote({ nom, email, chantierNom, referenceClient, texte, chantierId, pourSuivi = false }) {
+export async function sendNouvelleNote({ nom, email, chantierNom, referenceClient, texte, chantierId, pourAbonne = false }) {
   if (!process.env.SMTP_HOST) {
     console.warn('[mailer] SMTP non configuré — email non envoyé à', email);
     return;
@@ -164,8 +164,8 @@ export async function sendNouvelleNote({ nom, email, chantierNom, referenceClien
         <div style="padding:32px;border:1px solid #e9ebee;border-top:none">
           <h2 style="margin:0 0 16px;font-size:20px;color:#20242a">Bonjour ${esc(nom)},</h2>
           <p style="color:#5c656f;line-height:1.6;margin:0 0 20px">
-            ${pourSuivi ? 'FB ELEC a publié un message sur le chantier' : 'FB ELEC vous a envoyé un message concernant votre chantier'}
-            <strong style="color:#20242a">${esc(chantierNom)}</strong>${referenceClient ? ` (réf. <strong style="color:#20242a">${esc(referenceClient)}</strong>)` : ''}${pourSuivi ? ' de votre société' : ''} :
+            ${pourAbonne ? 'FB ELEC a publié un message sur le chantier' : 'FB ELEC vous a envoyé un message concernant votre chantier'}
+            <strong style="color:#20242a">${esc(chantierNom)}</strong>${referenceClient ? ` (réf. <strong style="color:#20242a">${esc(referenceClient)}</strong>)` : ''}${pourAbonne ? ' de votre société' : ''} :
           </p>
           <div style="background:#f5f6f8;border-radius:10px;padding:20px 24px;margin-bottom:28px;
             font-size:15px;color:#20242a;line-height:1.7;white-space:pre-wrap">${esc(texte)}</div>
@@ -183,49 +183,9 @@ export async function sendNouvelleNote({ nom, email, chantierNom, referenceClien
   });
 }
 
-// Rôle « suivi » : un collègue de la société a créé un chantier.
-export async function sendNouveauChantierSuivi({ nom, email, auteurNom, chantierNom, referenceClient, chantierId }) {
-  if (!process.env.SMTP_HOST) {
-    console.warn('[mailer] SMTP non configuré — email non envoyé à', email);
-    return;
-  }
-  const base = process.env.PUBLIC_URL || '';
-  const url = chantierId ? `${base}?chantier=${chantierId}` : base;
-  await transporter.sendMail({
-    from: `"FB ELEC" <${process.env.SMTP_FROM || process.env.SMTP_USER}>`,
-    to: email,
-    subject: `Nouveau chantier dans votre société : ${referenceClient ? `${referenceClient} — ` : ''}${chantierNom}`,
-    html: `
-      <div style="font-family:Arial,sans-serif;max-width:560px;margin:0 auto">
-        <div style="background:#1a1a1a;padding:28px 32px">
-          <h1 style="margin:0;color:#F5C518;font-size:22px;letter-spacing:.05em">FB ELEC</h1>
-        </div>
-        <div style="padding:32px;border:1px solid #e9ebee;border-top:none">
-          <h2 style="margin:0 0 16px;font-size:20px;color:#20242a">Bonjour ${esc(nom)},</h2>
-          <p style="color:#5c656f;line-height:1.6;margin:0 0 20px">
-            <strong style="color:#20242a">${esc(auteurNom)}</strong> vient de créer un nouveau chantier pour votre société :
-          </p>
-          <div style="background:#f5f6f8;border-left:4px solid #F5C518;border-radius:0 10px 10px 0;
-            padding:18px 22px;margin-bottom:28px">
-            ${referenceClient ? `<div style="font-size:19px;color:#20242a;font-weight:700;margin-bottom:6px">${esc(referenceClient)}</div>` : ''}
-            <div style="font-size:14px;color:#5c656f">${esc(chantierNom)}</div>
-          </div>
-          <a href="${url}"
-            style="display:inline-block;background:#F5C518;color:#1a1a1a;padding:13px 26px;
-            border-radius:10px;text-decoration:none;font-weight:700;font-size:15px">
-            Voir le chantier →
-          </a>
-          <p style="margin:28px 0 0;font-size:13px;color:#98a0a9">
-            Vous recevez cet e-mail car votre compte suit tous les chantiers de votre société.
-          </p>
-        </div>
-      </div>
-    `,
-  });
-}
-
-// Rôle « suivi » : copie d'un message envoyé à FB ELEC par un collègue depuis un chantier.
-export async function sendMessageCollegueSuivi({ nom, email, auteurNom, chantierNom, referenceClient, message, chantierId }) {
+// Collègue abonné à un chantier : copie d'un message envoyé à FB ELEC depuis ce chantier.
+// pourProprietaire : le destinataire est le créateur du chantier (message écrit par un collègue).
+export async function sendMessageCollegue({ nom, email, auteurNom, chantierNom, referenceClient, message, chantierId, pourProprietaire = false }) {
   if (!process.env.SMTP_HOST) {
     console.warn('[mailer] SMTP non configuré — email non envoyé à', email);
     return;
@@ -255,7 +215,9 @@ export async function sendMessageCollegueSuivi({ nom, email, auteurNom, chantier
             Voir le chantier →
           </a>
           <p style="margin:28px 0 0;font-size:13px;color:#98a0a9">
-            Vous recevez cet e-mail car votre compte suit tous les chantiers de votre société.
+            ${pourProprietaire
+              ? 'Vous recevez cet e-mail car vous êtes le créateur de ce chantier.'
+              : "Vous recevez cet e-mail car l'administrateur de votre société vous a ajouté aux notifications de ce chantier."}
           </p>
         </div>
       </div>

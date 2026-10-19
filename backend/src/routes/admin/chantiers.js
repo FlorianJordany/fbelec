@@ -3,7 +3,7 @@ import fs from 'fs';
 import { pool } from '../../db.js';
 import { toPublicUrl } from '../../middleware/upload.js';
 import { sendEtapeAvancement } from '../../services/mailer.js';
-import { destinatairesSuivi } from '../../services/suivi.js';
+import { destinatairesAbonnes } from '../../services/abonnes.js';
 import { genererMandat, genererMandatFichier } from '../../services/mandat.js';
 import { str, gps, libelleGps } from '../../utils/validate.js';
 
@@ -276,8 +276,8 @@ router.put('/:id/etapes', async (req, res, next) => {
           'SELECT id, label FROM fbelec.ref_etapes WHERE id = ANY($1)', [changed.map(e => e.etape_id)]
         );
         const labelMap = Object.fromEntries(labels.map(l => [l.id, l.label]));
-        // Comptes « suivi » de la société (hors propriétaire, déjà prévenu).
-        const suivis = await destinatairesSuivi(req.params.id, [row.client_id]);
+        // Collègues abonnés à ce chantier (hors propriétaire, déjà prévenu).
+        const abonnes = await destinatairesAbonnes(req.params.id, [row.client_id]);
         for (const ch of changed) {
           const commun = {
             chantierNom: row.chantier_nom, referenceClient: row.reference_client,
@@ -286,8 +286,8 @@ router.put('/:id/etapes', async (req, res, next) => {
           };
           if (row.client_email) sendEtapeAvancement({ nom: row.client_nom, email: row.client_email, ...commun })
             .catch(e => console.error('[mailer] etape:', e.message));
-          for (const s of suivis) sendEtapeAvancement({ nom: s.nom, email: s.email, ...commun, pourSuivi: true })
-            .catch(e => console.error('[mailer] etape (suivi):', e.message));
+          for (const s of abonnes) sendEtapeAvancement({ nom: s.nom, email: s.email, ...commun, pourAbonne: true })
+            .catch(e => console.error('[mailer] etape (abonné):', e.message));
         }
       }).catch(e => console.error('[mailer] etape:', e.message));
     }

@@ -39,7 +39,7 @@ router.post('/', async (req, res, next) => {
     const telephone = str(req.body.telephone, { max: 40, label: 'Téléphone' });
     // Société (facultative) + rôle : validés côté backend, jamais de confiance au front.
     const societeId = Number.isInteger(parseInt(req.body.societe_id)) ? parseInt(req.body.societe_id) : null;
-    const roleSociete = ['basic', 'admin', 'suivi'].includes(req.body.role_societe) ? req.body.role_societe : 'basic';
+    const roleSociete = ['basic', 'admin'].includes(req.body.role_societe) ? req.body.role_societe : 'basic';
 
     const code = genPassword();
     const hash = await bcrypt.hash(code, 12);
@@ -71,7 +71,7 @@ router.put('/:id', async (req, res, next) => {
     const hasSociete = req.body.societe_id !== undefined;
     const societeId = hasSociete && req.body.societe_id !== null && req.body.societe_id !== ''
       ? parseInt(req.body.societe_id) : null;
-    const roleSociete = ['basic', 'admin', 'suivi'].includes(req.body.role_societe) ? req.body.role_societe : null;
+    const roleSociete = ['basic', 'admin'].includes(req.body.role_societe) ? req.body.role_societe : null;
 
     const { rows: [client] } = await pool.query(
       `UPDATE fbelec.clients

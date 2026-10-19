@@ -257,25 +257,43 @@ open redirect (navigation interne, `?chantier=` casté en entier), secrets front
   `frontend/src/admin.jsx`, `frontend/src/client.jsx`. `node --check` OK ; build OK ; formulaire
   client vérifié en preview (2 champs Référence, bascule facturation, 0 erreur).
 
-## 18. Rôle société « Suivi » + carte satellite par défaut (2026-10-17)
+## 19. Abonnés aux notifications par chantier — remplace le rôle « Suivi » (2026-10-19)
 
-- **Rôle `suivi`** (valeurs de `clients.role_societe` : `basic` | `admin` | `suivi`, **liste
-  blanche backend** `admin/clients.js`, pas de CHECK SQL → aucune migration) :
-  - **lecture** de tous les chantiers de sa société, **écriture uniquement sur les siens**
-    (lecture seule stricte sur ceux des collègues : ni infos, ni documents/photos, ni messages) ;
-  - `accesSociete()` (`routes/client/chantiers.js`) renvoie `{ lecture, ecriture }` ; GET liste
-    et détail filtrent sur `lecture` et exposent `peut_modifier` (UX uniquement) ; **toutes** les
-    routes d'écriture (PUT `/infos`, POST/DELETE documents et photos, POST `/contact` avec
-    chantier) filtrent sur `ecriture`. `refusEcriture()` : **403** si le chantier est visible en
-    lecture seule, **404** sinon (pas de divulgation hors société). Un compte suivi **sans
-    société** n'a accès qu'à ses propres chantiers.
-  - **Notifications e-mail** aux comptes suivi **actifs** de la société du **propriétaire** du
-    chantier, hors propriétaire/auteur (`services/suivi.js`, requête paramétrée) : changement
-    d'étape, message FB ELEC visible client, nouveau chantier créé par un collègue, message d'un
-    collègue à FB ELEC depuis un chantier. Modèles dédiés, valeurs échappées (`esc()`), envois
-    asynchrones non bloquants (erreurs journalisées).
-  - Front : option dans les formulaires de compte, la page Sociétés, le filtre et le badge de la
-    gestion clients ; fiche client en **consultation seule** (bandeau, actions masquées).
+- **Rôle « suivi » retiré** (décision produit) : `role_societe` ∈ `basic` | `admin` (liste
+  blanche backend). La migration `2026-10-19_chantier_abonnes.sql` repasse les comptes `suivi`
+  en `basic`.
+- **Table `fbelec.chantier_abonnes`** (PK chantier+client, FK `ON DELETE CASCADE`) : sur chaque
+  chantier, l'**admin de la société du propriétaire** choisit les collègues abonnés
+  (`PUT /api/client/chantiers/:id/abonnes`, corps `{client_ids:[entiers]}`, remplace la liste en
+  transaction). Contrôles **backend** : demandeur admin de la même société que le propriétaire
+  (sinon 403 si visible, 404 sinon), ids entiers ≤ 500, uniquement des membres **actifs** de
+  cette société, propriétaire exclu (toujours notifié) → 400 sinon.
+- **Accès d'un abonné** : consultation **seule** du chantier (fragment SQL `VISIBLE` : propres
+  chantiers/société pour l'admin, OU abonnement **tant que l'abonné est membre de la société du
+  propriétaire**). Toutes les routes d'écriture restent filtrées sur `ecriture` → 403. Changer de
+  société ou être désactivé (contrôle `authClient`) coupe l'accès et les e-mails.
+- **E-mails** (`services/abonnes.js`, abonnés actifs de la société du propriétaire, hors
+  propriétaire/auteur) : changement d'étape, message FB ELEC, copie des messages envoyés à
+  FB ELEC depuis ce chantier. L'e-mail « nouveau chantier » du rôle suivi est supprimé.
+- Front : encadré « Notifications du chantier » sur la fiche (admin de la société uniquement :
+  cases à cocher, créateur verrouillé, enregistrement explicite) ; consultation seule pour les
+  abonnés (bandeau, actions masquées) ; rôle suivi retiré de l'admin FB ELEC.
+- **Revue adversariale (17 agents, 9 confirmations sur 14 → 6 correctifs)** : copie au
+  **créateur** quand un autre membre (admin) écrit à FB ELEC depuis son chantier ; bornes
+  `integer` sur les ids (400/404 au lieu de 500) ; verrou `FOR NO KEY UPDATE` contre deux
+  enregistrements simultanés de la liste ; resynchronisation de l'encadré après rechargement ;
+  écran « Chantier non disponible » au lieu d'un chargement infini (lien d'e-mail après retrait
+  d'abonnement) ; commentaire obsolète.
+- **Tests** : code exact des routes (liste, fiche, PUT abonnés, contact, refus d'écriture) et du
+  service exécuté sur PostgreSQL (PGlite), envois d'e-mails espionnés → 35/35 OK (droits,
+  validations, consultation seule, copies au créateur/abonnés, sortie de société, désactivation,
+  cascade, migration rejouable). UI vérifiée desktop + 375 px.
+
+## 18. Rôle société « Suivi » (retiré au § 19) + carte satellite par défaut (2026-10-17)
+
+- Rôle « suivi » livré puis **retiré le 2026-10-19** (voir § 19). Restent valables ci-dessous :
+  la carte satellite par défaut et les correctifs de la revue (compte désactivé, uploads,
+  échappement des e-mails).
 - **Carte** : la vue aérienne IGN (gratuite, sans clé) devient la vue par défaut ; plan
   OpenStreetMap et cadastre restent activables.
 - **Revue adversariale (14 agents, 4 défauts confirmés sur 11, préexistants) → corrigés** :

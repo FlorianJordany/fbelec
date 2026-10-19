@@ -192,7 +192,6 @@ function ModalNouveauClient({ onClose, onCreated }) {
               borderRadius:"var(--r-input)",fontSize:15,fontFamily:"var(--font-body)",background:"#fff"}}>
             <option value="basic">Basic — voit ses chantiers</option>
             <option value="admin">Admin — voit toute la société</option>
-            <option value="suivi">Suivi — lit toute la société + e-mails</option>
           </select>
         </div>}
       </div>
@@ -1365,7 +1364,6 @@ function ModalEditClient({ client, onClose, onSaved }) {
               borderRadius:"var(--r-input)",fontSize:15,fontFamily:"var(--font-body)",background:"#fff"}}>
             <option value="basic">Basic — voit ses chantiers</option>
             <option value="admin">Admin — voit toute la société</option>
-            <option value="suivi">Suivi — lit toute la société + e-mails</option>
           </select>
         </div>}
       </div>
@@ -1432,8 +1430,6 @@ export function AdminSocietes({ go, onLogout, isAdmin }) {
       await apiFetch(`/api/admin/clients/${client.id}`,{method:'PUT',body:{role_societe:role}});
       reload(); showToast(role==='admin'
         ?`${client.nom} est admin — il voit tous les chantiers de la société ✓`
-        :role==='suivi'
-        ?`${client.nom} est en suivi — il consulte tous les chantiers de la société et reçoit leurs e-mails ✓`
         :`${client.nom} est basic — il ne voit que ses chantiers ✓`);
     } catch(e){showToast(e.message,"error");}
   };
@@ -1450,8 +1446,8 @@ export function AdminSocietes({ go, onLogout, isAdmin }) {
         <h1 style={{margin:"12px 0 4px",fontFamily:"var(--font-display)",fontWeight:700,fontSize:36,
           textTransform:"uppercase",color:"var(--ink)"}}>Sociétés</h1>
         <p style={{margin:0,color:"var(--slate)",fontSize:15}}>
-          Regroupez vos comptes clients par société. Un compte « Admin » voit et gère tous les chantiers de sa société ;
-          un compte « Suivi » les consulte en lecture seule et reçoit toutes leurs notifications e-mail.
+          Regroupez vos comptes clients par société. Un compte « Admin » voit et gère tous les chantiers de sa société,
+          et choisit sur chaque chantier les collègues qui en reçoivent les notifications.
         </p>
       </div>
 
@@ -1532,7 +1528,6 @@ export function AdminSocietes({ go, onLogout, isAdmin }) {
                 fontSize:13,fontFamily:"var(--font-body)",color:"var(--ink)",background:"#fff",cursor:"pointer",maxWidth:180}}>
               <option value="basic">Basic — ses chantiers</option>
               <option value="admin">Admin — toute la société</option>
-              <option value="suivi">Suivi — lecture + e-mails</option>
             </select>
           </div>)}
         </div>
@@ -1643,7 +1638,6 @@ export function AdminClients({ go, onLogout, isAdmin }) {
         <select value={filtreRole} onChange={e=>setFiltreRole(e.target.value)} style={filStyle}>
           <option value="">Tous les rôles</option>
           <option value="admin">Admin société</option>
-          <option value="suivi">Suivi société</option>
           <option value="basic">Basic</option>
         </select>
       </div>
@@ -1678,8 +1672,7 @@ export function AdminClients({ go, onLogout, isAdmin }) {
           <div style={{minWidth:0}}>
             {c.societe_nom
               ? <><div style={{fontSize:13.5,color:"var(--ink)",fontWeight:600,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{c.societe_nom}</div>
-                  {c.role_societe==='admin'&&<div style={{fontSize:11.5,color:"var(--jaune-deep)",fontWeight:700}}>Admin société</div>}
-                  {c.role_societe==='suivi'&&<div style={{fontSize:11.5,color:"var(--slate)",fontWeight:700}}>Suivi société</div>}</>
+                  {c.role_societe==='admin'&&<div style={{fontSize:11.5,color:"var(--jaune-deep)",fontWeight:700}}>Admin société</div>}</>
               : <span style={{fontSize:13.5,color:"var(--muted)"}}>—</span>}
           </div>
           <div style={{fontSize:13.5,color:"var(--slate)"}}>{c.nb_chantiers} chantier(s)</div>

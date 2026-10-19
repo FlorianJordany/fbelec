@@ -444,6 +444,7 @@ function ChantierCard({ c, onOpen }) {
 export function ChantierDetail({ chantierId, go, onLogout, isAdmin, backTo, apiBase }) {
   const [data,setData]=useState(null);
   const [loading,setLoading]=useState(true);
+  const [erreur,setErreur]=useState("");
   const [reloadKey,setReloadKey]=useState(0);
   const [toast,showToast]=useToast();
   const base = apiBase || '/api/client/chantiers';
@@ -453,15 +454,30 @@ export function ChantierDetail({ chantierId, go, onLogout, isAdmin, backTo, apiB
   const reload = () => setReloadKey(k=>k+1);
 
   useEffect(()=>{
-    if (reloadKey===0) setLoading(true);
-    apiFetch(`${base}/${chantierId}`).then(setData).catch(console.error).finally(()=>setLoading(false));
+    if (reloadKey===0) { setLoading(true); setErreur(""); }
+    apiFetch(`${base}/${chantierId}`).then(setData)
+      .catch(e=>{ console.error(e); if (reloadKey===0) setErreur(e.message||"Chantier introuvable."); })
+      .finally(()=>setLoading(false));
   },[chantierId,reloadKey]);
+
+  // Chantier inaccessible (ex. lien d'e-mail après retrait d'un abonnement) : message au lieu d'un chargement sans fin.
+  if (!loading&&!data&&erreur) return <div style={{minHeight:"100vh",background:"var(--bg-soft)",display:"flex",flexDirection:"column"}}>
+    <AppHeader go={go} admin={false} isAdmin={isAdmin} onLogout={onLogout}/>
+    <main className="fb-wrap" style={{paddingTop:40,paddingBottom:60}}>
+      <Card style={{textAlign:"center"}}>
+        <p style={{margin:"0 0 6px",fontFamily:"var(--font-head)",fontWeight:700,fontSize:18,color:"var(--ink)"}}>Chantier non disponible</p>
+        <p style={{margin:"0 0 18px",color:"var(--slate)",fontSize:14.5}}>Ce chantier n'existe plus ou n'est plus accessible avec votre compte.</p>
+        <Btn variant="dark" icon="arrowL" onClick={()=>go(retour)}>{retour==="admin-vue-client"?"Tous les chantiers":"Mes chantiers"}</Btn>
+      </Card>
+    </main>
+    <Footer/>
+  </div>;
 
   if (loading||!data) return <div style={{minHeight:"100vh",background:"var(--bg-soft)",display:"flex",flexDirection:"column"}}>
     <AppHeader go={go} admin={false} isAdmin={isAdmin} onLogout={onLogout}/><div className="fb-spinner"/></div>;
 
   const c=data;
-  // Chantier d'un collègue vu par un compte « suivi » : consultation seule.
+  // Chantier d'un collègue auquel ce compte est abonné (notifications) : consultation seule.
   const lectureSeule=isClientView&&c.peut_modifier===false;
   const st=chantierBadge(c);
   const doneCount=c.etapes.filter(e=>e.etat==="done").length;
@@ -594,6 +610,8 @@ export function ChantierDetail({ chantierId, go, onLogout, isAdmin, backTo, apiB
             </div>)}
           </div>
         </Card>}
+        {isClientView&&c.abonnes_gestion&&<NotificationsChantier key={chantierId} chantierId={chantierId}
+          membres={c.abonnes_gestion} reload={reload} showToast={showToast}/>}
         {c.notes.length>0&&<Card>
           <SectionTitle icon="mail">Messages</SectionTitle>
           <Notes notes={c.notes}/>
@@ -811,6 +829,55 @@ function Documents({ documents, showStatut=false }) {
       </div>;
     })}
   </div>;
+}
+
+// ── Notifications du chantier (admin de la société) ───────────
+// Collègues abonnés : reçoivent les e-mails du chantier et peuvent le consulter (lecture seule).
+function NotificationsChantier({ chantierId, membres, reload, showToast }) {
+  const initial=membres.filter(m=>m.abonne&&!m.proprietaire).map(m=>m.id);
+  const [choix,setChoix]=useState(initial);
+  const [saving,setSaving]=useState(false);
+  // Resynchronise avec le serveur après chaque rechargement de la fiche.
+  const cleServeur=[...initial].sort((a,b)=>a-b).join(',');
+  useEffect(()=>{ setChoix(initial); },[cleServeur]); // eslint-disable-line react-hooks/exhaustive-deps
+  const autres=membres.filter(m=>!m.proprietaire);
+  const modifie=choix.length!==initial.length||choix.some(id=>!initial.includes(id));
+  const basculer=id=>setChoix(c=>c.includes(id)?c.filter(x=>x!==id):[...c,id]);
+  const enregistrer=async()=>{
+    setSaving(true);
+    try {
+      await apiFetch(`/api/client/chantiers/${chantierId}/abonnes`,{method:'PUT',body:{client_ids:choix}});
+      showToast('Destinataires des notifications enregistrés ✓'); reload();
+    } catch(e){ showToast(e.message,'error'); }
+    finally{ setSaving(false); }
+  };
+  return <Card>
+    <SectionTitle icon="mail">Notifications du chantier</SectionTitle>
+    <p style={{margin:'0 0 12px',fontSize:13.5,color:'var(--slate)',lineHeight:1.5}}>
+      Collègues qui reçoivent les e-mails de ce chantier (étapes, messages) et peuvent le consulter.
+    </p>
+    <div style={{display:'grid',gap:8}}>
+      {membres.map(m=><label key={m.id} style={{display:'flex',alignItems:'center',gap:10,padding:'9px 12px',minWidth:0,
+        border:'1px solid var(--line)',borderRadius:'var(--r-input)',
+        background:m.proprietaire?'var(--bg-soft)':'#fff',cursor:m.proprietaire?'default':'pointer'}}>
+        <input type="checkbox" checked={m.proprietaire||choix.includes(m.id)} disabled={m.proprietaire}
+          onChange={()=>basculer(m.id)} style={{width:18,height:18,flex:'0 0 auto',accentColor:'var(--jaune-deep)'}}/>
+        <span style={{flex:1,minWidth:0}}>
+          <span style={{display:'block',fontWeight:600,fontSize:14,color:'var(--ink)',overflowWrap:'anywhere'}}>{m.nom}</span>
+          <span style={{display:'block',fontSize:12.5,color:'var(--muted)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
+            {m.proprietaire?'Créateur du chantier — toujours notifié':m.email}
+          </span>
+        </span>
+      </label>)}
+    </div>
+    {autres.length===0
+      ? <p style={{margin:'10px 0 0',fontSize:13,color:'var(--muted)'}}>Aucun autre membre actif dans votre société.</p>
+      : <div style={{marginTop:12,display:'flex',justifyContent:'flex-end'}}>
+          <Btn variant="dark" size="sm" icon="check" disabled={!modifie||saving} onClick={enregistrer}>
+            {saving?'Enregistrement…':'Enregistrer'}
+          </Btn>
+        </div>}
+  </Card>;
 }
 
 // ── Notes (fil de messages — partagé avec la fiche admin) ────
