@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, lazy, Suspense } from 'react';
 
 // ── Icônes SVG ────────────────────────────────────────────────
 export function Icon({ name, size=20, stroke=1.8, style }) {
@@ -368,6 +368,42 @@ export function AddressAutocomplete({ value, onChange, onSelect, placeholder, di
       </div>)}
     </div>}
   </div>;
+}
+
+// ── Localisation par point GPS (Leaflet chargé à la demande) ───
+// Échec du chargement (réseau, ou fichier remplacé par un redéploiement) : message à la place
+// de la carte, sans faire tomber le formulaire.
+const MapPicker = lazy(() => import('./MapPicker.jsx').catch(() => ({
+  default: () => <div className="fb-map" style={{display:'grid',placeItems:'center',padding:16,textAlign:'center',color:'var(--muted)',fontSize:14}}>
+    Impossible de charger la carte. Rechargez la page pour réessayer, ou saisissez une adresse.
+  </div>,
+})));
+export function CarteGps({ value, onChange, commune, codePostal, onLocalite }) {
+  return <div>
+    <p style={{margin:'0 0 8px',fontSize:13,color:'var(--slate)',lineHeight:1.5}}>
+      Saisissez la commune pour centrer la carte, zoomez sur le terrain puis <strong>cliquez pour placer le point</strong> (déplaçable).
+      Plan et cadastre (numéros de parcelles) : icône en haut à droite de la carte.
+    </p>
+    <Suspense fallback={<div className="fb-map" style={{display:'grid',placeItems:'center',color:'var(--muted)',fontSize:14}}>Chargement de la carte…</div>}>
+      <MapPicker value={value} onChange={onChange} commune={commune} codePostal={codePostal} onLocalite={onLocalite}/>
+    </Suspense>
+    <div style={{marginTop:7,fontSize:13,color:value?'var(--c-done-ink)':'var(--muted)',fontWeight:value?600:400}}>
+      {value?`Point placé : ${value.lat.toFixed(5)}, ${value.lng.toFixed(5)}`:'Aucun point placé pour le moment.'}
+    </div>
+  </div>;
+}
+
+// Coordonnées + liens de carte externes (fiches chantier).
+export function GpsLinks({ lat, lng }) {
+  const la=Number(lat), lo=Number(lng);
+  const a={color:'var(--jaune-deep)',fontWeight:700,textDecoration:'none',fontSize:13.5};
+  return <span style={{display:'inline-flex',flexWrap:'wrap',gap:'2px 12px',alignItems:'baseline'}}>
+    <span style={{fontFamily:'var(--font-mono)',fontSize:13.5}}>{la.toFixed(5)}, {lo.toFixed(5)}</span>
+    <a href={`https://www.openstreetmap.org/?mlat=${la}&mlon=${lo}#map=18/${la}/${lo}`}
+      target="_blank" rel="noopener noreferrer" style={a}>OpenStreetMap</a>
+    <a href={`https://www.google.com/maps/search/?api=1&query=${la},${lo}`}
+      target="_blank" rel="noopener noreferrer" style={a}>Google Maps</a>
+  </span>;
 }
 
 // ── Footer signature OutiLab (obligatoire, toutes les pages) ───

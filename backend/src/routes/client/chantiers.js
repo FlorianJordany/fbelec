@@ -4,18 +4,23 @@ import fs from 'fs';
 import { pool } from '../../db.js';
 import authClient from '../../middleware/authClient.js';
 import { toPublicUrl, uploadDoc, uploadPhotos } from '../../middleware/upload.js';
-import { str } from '../../utils/validate.js';
-import { sendContactClient, sendNouveauChantierAdmin } from '../../services/mailer.js';
+import { str, gps, libelleGps } from '../../utils/validate.js';
+import { sendContactClient, sendNouveauChantierAdmin, sendMessageCollegue } from '../../services/mailer.js';
+import { destinatairesAbonnes, membresAbonnes, lireClientIds, remplacerAbonnes, INT_MAX } from '../../services/abonnes.js';
 import { genererMandat, genererMandatFichier } from '../../services/mandat.js';
 
 const router = Router();
 router.use(authClient);
 
 // ── Visibilité société ────────────────────────────────────────
-// Un client 'basic' n'accède qu'à ses propres chantiers.
-// L'admin d'une société accède aux chantiers de TOUS les comptes de sa société.
-// Renvoie la liste des client_id accessibles (toujours >= [soi-même]).
-async function allowedClientIds(clientId) {
+// 'basic' : ses propres chantiers (lecture + écriture).
+// 'admin' : lecture + écriture sur les chantiers de TOUS les comptes de sa société.
+// Créateur du chantier, admin de la société (ou FB ELEC) : choix, chantier par chantier, des
+//           collègues abonnés aux notifications.
+// Abonné (fbelec.chantier_abonnes) : consultation seule du chantier, tant qu'il appartient
+//           à la société du propriétaire.
+// Renvoie { ecriture, societeId, admin } — ecriture : client_id modifiables (toujours >= [soi]).
+async function accesSociete(clientId) {
   const { rows: [me] } = await pool.query(
     'SELECT societe_id, role_societe FROM fbelec.clients WHERE id = $1', [clientId]
   );
@@ -23,9 +28,30 @@ async function allowedClientIds(clientId) {
     const { rows } = await pool.query(
       'SELECT id FROM fbelec.clients WHERE societe_id = $1', [me.societe_id]
     );
-    return rows.map(r => r.id);
+    return { ecriture: rows.map(r => r.id), societeId: me.societe_id, admin: true };
   }
-  return [clientId];
+  return { ecriture: [clientId], societeId: me?.societe_id ?? null, admin: false };
+}
+const ecritureIds = async clientId => (await accesSociete(clientId)).ecriture;
+
+// Condition SQL « chantier c visible » ($ids : client_id modifiables, $me : compte connecté).
+// Les arguments sont des numéros de paramètres ($n), jamais des valeurs.
+const VISIBLE = (ids, me) => `(c.client_id = ANY(${ids}) OR EXISTS (
+  SELECT 1 FROM fbelec.chantier_abonnes a
+    JOIN fbelec.clients p ON p.id = c.client_id
+    JOIN fbelec.clients m ON m.id = a.client_id
+   WHERE a.chantier_id = c.id AND a.client_id = ${me} AND m.societe_id = p.societe_id))`;
+
+// Écriture refusée : 403 si le chantier est visible en consultation seule (abonné), sinon 404.
+async function refusEcriture(req, res, chantierId) {
+  const { ecriture } = await accesSociete(req.clientId);
+  const { rows: [visible] } = await pool.query(
+    `SELECT 1 FROM fbelec.chantiers c WHERE c.id = $1 AND c.actif = TRUE AND ${VISIBLE('$2', '$3')}`,
+    [chantierId, ecriture, req.clientId]
+  );
+  return visible
+    ? res.status(403).json({ error: 'Ce chantier est en lecture seule pour votre compte.' })
+    : res.status(404).json({ error: 'Chantier introuvable.' });
 }
 
 // GET /api/client/etapes — référentiel des étapes actives
@@ -43,12 +69,13 @@ router.get('/etapes', async (req, res, next) => {
 router.get('/chantiers', async (req, res, next) => {
   try {
     const archived = req.query.archived === '1' || req.query.archived === 'true';
-    const ids = await allowedClientIds(req.clientId);
+    const { ecriture } = await accesSociete(req.clientId);
     const { rows } = await pool.query(
       `SELECT
-         c.id, c.reference, c.nom, c.adresse, c.commune, c.type_prestation,
+         c.id, c.reference, c.reference_client, c.nom, c.adresse, c.commune, c.type_prestation,
          c.statut, c.prochaine_action, c.prochaine_action_qui, c.prochaine_action_date,
          c.derniere_maj, c.action_requise_titre, c.archive,
+         c.client_id = ANY($1) AS peut_modifier,
          CASE WHEN c.client_id <> $3
               THEN (SELECT nom FROM fbelec.clients WHERE id = c.client_id) END AS proprietaire_nom,
          (SELECT url FROM fbelec.photos p
@@ -62,9 +89,9 @@ router.get('/chantiers', async (req, res, next) => {
          EXISTS(SELECT 1 FROM fbelec.chantier_etapes ce JOIN fbelec.ref_etapes re ON re.id = ce.etape_id
           WHERE ce.chantier_id = c.id AND ce.etat = 'blocked' AND re.actif = TRUE AND ce.masquee = FALSE) AS a_bloquee
        FROM fbelec.chantiers c
-       WHERE c.client_id = ANY($1) AND c.actif = TRUE AND c.archive = $2
+       WHERE ${VISIBLE('$1', '$3')} AND c.actif = TRUE AND c.archive = $2
        ORDER BY c.updated_at DESC`,
-      [ids, archived, req.clientId]
+      [ecriture, archived, req.clientId]
     );
     res.json(rows.map(c => ({ ...c, photo_couverture: toPublicUrl(c.photo_couverture) })));
   } catch (err) { next(err); }
@@ -74,12 +101,23 @@ router.get('/chantiers', async (req, res, next) => {
 router.get('/chantiers/:id', async (req, res, next) => {
   try {
     const chantierId = parseInt(req.params.id);
-    const ids = await allowedClientIds(req.clientId);
+    const acces = await accesSociete(req.clientId);
     const { rows: [chantier] } = await pool.query(
-      'SELECT * FROM fbelec.chantiers WHERE id = $1 AND client_id = ANY($2) AND actif = TRUE',
-      [chantierId, ids]
+      `SELECT c.*, CASE WHEN c.client_id <> $3
+                        THEN (SELECT nom FROM fbelec.clients WHERE id = c.client_id) END AS proprietaire_nom
+       FROM fbelec.chantiers c WHERE c.id = $1 AND c.actif = TRUE AND ${VISIBLE('$2', '$3')}`,
+      [chantierId, acces.ecriture, req.clientId]
     );
     if (!chantier) return res.status(404).json({ error: 'Chantier introuvable.' });
+    // Interface : masque les actions de modification (le backend les refuse de toute façon).
+    chantier.peut_modifier = acces.ecriture.includes(chantier.client_id);
+
+    // Créateur du chantier ou admin de la société : membres actifs + abonnés aux notifications.
+    // (Un admin ne voit que des chantiers de sa société : VISIBLE ci-dessus.)
+    if (chantier.client_id === req.clientId || acces.admin) {
+      const membres = await membresAbonnes(chantierId, chantier.client_id);
+      if (membres.length) chantier.abonnes_gestion = membres;
+    }
 
     const { rows: etapes } = await pool.query(
       `SELECT ce.etat, re.id AS etape_id, re.label, re.sous_texte, re.ordre, re.avec_date,
@@ -107,7 +145,7 @@ router.get('/chantiers/:id', async (req, res, next) => {
     );
 
     const { rows: notes } = await pool.query(
-      'SELECT id, auteur, texte, date_affichee, created_at FROM fbelec.notes WHERE chantier_id = $1 AND visible_client = TRUE ORDER BY created_at DESC',
+      'SELECT id, auteur, texte, date_affichee, de_client, created_at FROM fbelec.notes WHERE chantier_id = $1 AND visible_client = TRUE ORDER BY created_at DESC',
       [chantierId]
     );
 
@@ -118,6 +156,36 @@ router.get('/chantiers/:id', async (req, res, next) => {
       documents: documents.map(d => ({ ...d, url: toPublicUrl(d.url) })),
       notes,
     });
+  } catch (err) { next(err); }
+});
+
+// PUT /api/client/chantiers/:id/abonnes — le créateur du chantier ou l'admin de la société choisit
+// les collègues qui reçoivent les notifications de ce chantier. Corps : { client_ids: [entiers] }
+// (remplace la liste).
+router.put('/chantiers/:id/abonnes', async (req, res, next) => {
+  try {
+    const chantierId = parseInt(req.params.id, 10);
+    if (!Number.isInteger(chantierId) || chantierId <= 0 || chantierId > INT_MAX) {
+      return res.status(404).json({ error: 'Chantier introuvable.' });
+    }
+    const choisis = lireClientIds(req.body);
+    if (!choisis) return res.status(400).json({ error: 'Liste de collaborateurs invalide.' });
+    const acces = await accesSociete(req.clientId);
+    const { rows: [c] } = await pool.query(
+      `SELECT c.id, c.client_id, p.societe_id
+         FROM fbelec.chantiers c JOIN fbelec.clients p ON p.id = c.client_id
+        WHERE c.id = $1 AND c.actif = TRUE AND ${VISIBLE('$2', '$3')}`,
+      [chantierId, acces.ecriture, req.clientId]
+    );
+    if (!c) return res.status(404).json({ error: 'Chantier introuvable.' });
+    const gere = c.client_id === req.clientId || (acces.admin && c.societe_id === acces.societeId);
+    if (!c.societe_id || !gere) {
+      return res.status(403).json({ error: "Seul le créateur du chantier ou l'administrateur de la société peut choisir les destinataires." });
+    }
+    if (!await remplacerAbonnes(chantierId, c.client_id, c.societe_id, choisis)) {
+      return res.status(400).json({ error: 'Collaborateur hors de la société, inactif ou propriétaire du chantier.' });
+    }
+    res.json({ ok: true, client_ids: choisis });
   } catch (err) { next(err); }
 });
 
@@ -134,8 +202,12 @@ router.post('/chantiers', async (req, res, next) => {
             date_debut_chantier, duree_chantier, terrain_viabilise,
             reference_client, reference_facturation, puissance_type,
             facturation_telephone, facturation_email } = req.body;
+    const commentaire = str(req.body.commentaire, { max: 5000, label: 'Commentaire' });
+    // Adresse OU point GPS (le point remplace l'adresse quand elle n'existe pas encore).
+    const point = gps(req.body.gps_lat, req.body.gps_lng);
+    const adresseChantier = (typeof adresse === 'string' && adresse.trim()) || (point && libelleGps(point));
 
-    if (!adresse?.trim() || !commune?.trim() || !adresse_facturation?.trim()
+    if (!adresseChantier || !commune?.trim() || !adresse_facturation?.trim()
         || !puissance_demandee?.trim() || !date_debut_chantier || !duree_chantier?.trim()) {
       return res.status(400).json({ error: 'Champs obligatoires manquants.' });
     }
@@ -151,27 +223,31 @@ router.post('/chantiers', async (req, res, next) => {
     );
     if (!clientInfo) return res.status(404).json({ error: 'Client introuvable.' });
 
-    const nom = `${adresse.trim()}, ${commune.trim()}`;
+    const nom = `${adresseChantier}, ${commune.trim()}`;
 
     const dbClient = await pool.connect();
     try {
       await dbClient.query('BEGIN');
 
-      // Insérer d'abord pour obtenir l'ID
+      // Insérer d'abord pour obtenir l'ID.
+      // Référence provisoire unique côté SQL : une valeur fixe ('TMP') restée en base
+      // après un échec bloquerait toutes les créations suivantes (index unique).
       const { rows: [chantier] } = await dbClient.query(
         `INSERT INTO fbelec.chantiers
            (client_id, reference, nom, adresse, commune, code_postal,
             adresse_facturation, puissance_demandee, date_debut_chantier,
             duree_chantier, statut, cree_par_client, terrain_viabilise,
             reference_client, reference_facturation, puissance_type,
-            facturation_telephone, facturation_email)
-         VALUES ($1,'TMP',$2,$3,$4,$5,$6,$7,$8,$9,'prepa',TRUE,$10,$11,$12,$13,$14,$15) RETURNING *`,
+            facturation_telephone, facturation_email, commentaire,
+            gps_lat, gps_lng, vu_admin)
+         VALUES ($1,'TMP-'||md5(random()::text),$2,$3,$4,$5,$6,$7,$8,$9,'prepa',TRUE,$10,$11,$12,$13,$14,$15,$16,$17,$18,FALSE) RETURNING *`,
         [req.clientId, nom,
-         adresse.trim(), commune.trim(), code_postal?.trim()||null,
+         adresseChantier, commune.trim(), code_postal?.trim()||null,
          adresse_facturation.trim(), puissance_demandee.trim(),
          date_debut_chantier, duree_chantier.trim(), terrain_viabilise,
          reference_client.trim(), reference_facturation?.trim()||null, puissance_type,
-         facturation_telephone?.trim()||null, facturation_email?.trim()||null]
+         facturation_telephone?.trim()||null, facturation_email?.trim()||null, commentaire,
+         point ? point.lat : null, point ? point.lng : null]
       );
 
       // Construire la référence : DEP-VIL-NOM-ID
@@ -189,12 +265,13 @@ router.post('/chantiers', async (req, res, next) => {
       await dbClient.query('COMMIT');
 
       // Mandat EDF prérempli, enregistré parmi les documents du chantier
+      // — sauf si l'utilisateur fournit son propre mandat (uploadé juste après).
       // (échec non bloquant : la création reste valide).
-      try {
+      if (req.body.mandat_fourni !== true) try {
         const fichier = await genererMandatFichier({
           chantierId: chantier.id, schema: req.schema,
           reference: reference_client.trim(),
-          adresse: [adresse.trim(), code_postal?.trim(), commune.trim()].filter(Boolean).join(', '),
+          adresse: [adresseChantier, code_postal?.trim(), commune.trim()].filter(Boolean).join(', '),
           ville: commune.trim(),
         });
         await pool.query(
@@ -230,30 +307,52 @@ router.put('/chantiers/:id/infos', async (req, res, next) => {
     if (!fields.length) return res.status(400).json({ error: 'Aucun champ à modifier.' });
 
     const set = fields.map((f, i) => `${f} = $${i + 1}`).join(', ');
+    // Le nom auto-généré « adresse, commune » suit une adresse/commune modifiée (ex. chantier créé
+    // par point GPS, adresse réelle saisie ensuite) ; un nom personnalisé est conservé.
+    // Dans un UPDATE, les colonnes à droite du SET désignent les valeurs AVANT modification.
+    const iA = fields.indexOf('adresse'), iC = fields.indexOf('commune');
+    const nouv = (i, col) => (i >= 0 ? `COALESCE($${i + 1}::text, ${col})` : col);
+    const setNom = (iA >= 0 || iC >= 0)
+      ? `, nom = CASE WHEN nom = adresse || ', ' || commune
+                 THEN ${nouv(iA, 'adresse')} || ', ' || ${nouv(iC, 'commune')} ELSE nom END`
+      : '';
     // '' → null (champs texte) ; on préserve les booléens (false ne doit pas devenir null).
-    const ids = await allowedClientIds(req.clientId);
+    const ids = await ecritureIds(req.clientId);
     const vals = [...fields.map(f => req.body[f] === '' ? null : req.body[f]), chantierId, ids];
 
     const { rows: [c] } = await pool.query(
-      `UPDATE fbelec.chantiers SET ${set}
+      `UPDATE fbelec.chantiers SET ${set}${setNom}
        WHERE id = $${fields.length + 1} AND client_id = ANY($${fields.length + 2}) AND actif = TRUE
        RETURNING *`,
       vals
     );
-    if (!c) return res.status(404).json({ error: 'Chantier introuvable.' });
+    if (!c) return refusEcriture(req, res, chantierId);
     res.json(c);
   } catch (err) { next(err); }
 });
 
 // POST /api/client/chantiers/:id/documents — déposer un document
-router.post('/chantiers/:id/documents', uploadDoc.single('fichier'), async (req, res, next) => {
+// Droit d'écriture vérifié AVANT multer : un envoi refusé n'écrit rien sur le disque.
+async function exigeEcriture(req, res, next) {
   try {
     const chantierId = parseInt(req.params.id);
     const { rows: [c] } = await pool.query(
       'SELECT id FROM fbelec.chantiers WHERE id = $1 AND client_id = ANY($2) AND actif = TRUE',
-      [chantierId, await allowedClientIds(req.clientId)]
+      [chantierId, await ecritureIds(req.clientId)]
     );
-    if (!c) return res.status(404).json({ error: 'Chantier introuvable.' });
+    if (!c) return refusEcriture(req, res, chantierId);
+    next();
+  } catch (err) { next(err); }
+}
+
+router.post('/chantiers/:id/documents', exigeEcriture, uploadDoc.single('fichier'), async (req, res, next) => {
+  try {
+    const chantierId = parseInt(req.params.id);
+    const { rows: [c] } = await pool.query(
+      'SELECT id FROM fbelec.chantiers WHERE id = $1 AND client_id = ANY($2) AND actif = TRUE',
+      [chantierId, await ecritureIds(req.clientId)]
+    );
+    if (!c) return refusEcriture(req, res, chantierId);
 
     if (!req.file) return res.status(400).json({ error: 'Fichier manquant.' });
 
@@ -268,18 +367,18 @@ router.post('/chantiers/:id/documents', uploadDoc.single('fichier'), async (req,
       [chantierId, docNom, ext, req.file.path, categorie || null]
     );
     res.status(201).json({ ...doc, url: toPublicUrl(doc.url) });
-  } catch (err) { next(err); }
+  } catch (err) { if (req.file) fs.unlink(req.file.path, () => {}); next(err); }
 });
 
 // POST /api/client/chantiers/:id/photos — déposer des photos
-router.post('/chantiers/:id/photos', uploadPhotos.single('photo'), async (req, res, next) => {
+router.post('/chantiers/:id/photos', exigeEcriture, uploadPhotos.single('photo'), async (req, res, next) => {
   try {
     const chantierId = parseInt(req.params.id);
     const { rows: [c] } = await pool.query(
       'SELECT id FROM fbelec.chantiers WHERE id = $1 AND client_id = ANY($2) AND actif = TRUE',
-      [chantierId, await allowedClientIds(req.clientId)]
+      [chantierId, await ecritureIds(req.clientId)]
     );
-    if (!c) return res.status(404).json({ error: 'Chantier introuvable.' });
+    if (!c) return refusEcriture(req, res, chantierId);
 
     if (!req.file) return res.status(400).json({ error: 'Photo manquante.' });
 
@@ -288,7 +387,7 @@ router.post('/chantiers/:id/photos', uploadPhotos.single('photo'), async (req, r
       [chantierId, req.file.path]
     );
     res.status(201).json({ ...photo, url: toPublicUrl(photo.url) });
-  } catch (err) { next(err); }
+  } catch (err) { if (req.file) fs.unlink(req.file.path, () => {}); next(err); }
 });
 
 // DELETE /api/client/chantiers/:id/documents/:docId
@@ -297,9 +396,9 @@ router.delete('/chantiers/:id/documents/:docId', async (req, res, next) => {
     const chantierId = parseInt(req.params.id);
     const { rows: [c] } = await pool.query(
       'SELECT id FROM fbelec.chantiers WHERE id=$1 AND client_id=ANY($2) AND actif=TRUE',
-      [chantierId, await allowedClientIds(req.clientId)]
+      [chantierId, await ecritureIds(req.clientId)]
     );
-    if (!c) return res.status(404).json({ error: 'Chantier introuvable.' });
+    if (!c) return refusEcriture(req, res, chantierId);
 
     const { rows: [doc] } = await pool.query(
       'DELETE FROM fbelec.documents WHERE id=$1 AND chantier_id=$2 RETURNING url',
@@ -318,9 +417,9 @@ router.delete('/chantiers/:id/photos/:photoId', async (req, res, next) => {
     const chantierId = parseInt(req.params.id);
     const { rows: [c] } = await pool.query(
       'SELECT id FROM fbelec.chantiers WHERE id=$1 AND client_id=ANY($2) AND actif=TRUE',
-      [chantierId, await allowedClientIds(req.clientId)]
+      [chantierId, await ecritureIds(req.clientId)]
     );
-    if (!c) return res.status(404).json({ error: 'Chantier introuvable.' });
+    if (!c) return refusEcriture(req, res, chantierId);
 
     const { rows: [photo] } = await pool.query(
       'DELETE FROM fbelec.photos WHERE id=$1 AND chantier_id=$2 RETURNING url',
@@ -347,17 +446,64 @@ router.post('/mandat', async (req, res, next) => {
 });
 
 // POST /api/client/contact — le client envoie un message à FB ELEC
+// Si chantier_id est fourni : le message est stocké dans le fil du chantier
+// (fbelec.notes, de_client=TRUE) et l'e-mail est enrichi des infos du chantier.
 router.post('/contact', async (req, res, next) => {
   try {
     const message = str(req.body.message, { required: true, max: 5000, label: 'Message' });
+    const chantierId = parseInt(req.body.chantier_id, 10);
 
     const { rows: [client] } = await pool.query(
-      'SELECT nom, email FROM fbelec.clients WHERE id = $1', [req.clientId]
+      `SELECT cl.nom, cl.email, cl.telephone, s.nom AS societe_nom
+       FROM fbelec.clients cl
+       LEFT JOIN fbelec.societes s ON s.id = cl.societe_id
+       WHERE cl.id = $1`, [req.clientId]
     );
     if (!client) return res.status(404).json({ error: 'Client introuvable.' });
 
-    sendContactClient({ clientNom: client.nom, clientEmail: client.email, message })
-      .catch(e => console.error('[mailer] contact:', e.message));
+    let chantier = null;
+    if (Number.isInteger(chantierId) && chantierId > 0) {
+      const { rows: [c] } = await pool.query(
+        `SELECT c.id, c.nom, c.reference, c.reference_client, c.adresse, c.commune, c.client_id,
+                p.nom AS proprietaire_nom, p.email AS proprietaire_email, p.actif AS proprietaire_actif
+           FROM fbelec.chantiers c JOIN fbelec.clients p ON p.id = c.client_id
+          WHERE c.id = $1 AND c.client_id = ANY($2) AND c.actif = TRUE`,
+        [chantierId, await ecritureIds(req.clientId)]
+      );
+      if (!c) return refusEcriture(req, res, chantierId);
+      chantier = c;
+      await pool.query(
+        `INSERT INTO fbelec.notes (chantier_id, auteur, texte, visible_client, de_client, date_affichee)
+         VALUES ($1, $2, $3, TRUE, TRUE, $4)`,
+        [chantier.id, client.nom, message,
+         new Date().toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' })]
+      );
+    }
+
+    sendContactClient({
+      clientNom: client.nom, clientEmail: client.email,
+      clientTelephone: client.telephone, societeNom: client.societe_nom, message,
+      chantier: chantier && {
+        id: chantier.id, nom: chantier.nom, reference: chantier.reference,
+        referenceClient: chantier.reference_client,
+        adresse: [chantier.adresse, chantier.commune].filter(Boolean).join(', '),
+      },
+    }).catch(e => console.error('[mailer] contact:', e.message));
+
+    // Message rattaché à un chantier : copie au créateur (s'il n'est pas l'auteur, ex. l'admin
+    // de la société) et aux collègues abonnés à ce chantier (hors auteur).
+    if (chantier) {
+      const commun = { auteurNom: client.nom, message, chantierNom: chantier.nom,
+                       referenceClient: chantier.reference_client, chantierId: chantier.id };
+      if (chantier.client_id !== req.clientId && chantier.proprietaire_actif && chantier.proprietaire_email) {
+        sendMessageCollegue({ nom: chantier.proprietaire_nom, email: chantier.proprietaire_email, ...commun, pourProprietaire: true })
+          .catch(e => console.error('[mailer] contact (propriétaire):', e.message));
+      }
+      destinatairesAbonnes(chantier.id, [req.clientId, chantier.client_id]).then(abonnes => {
+        for (const s of abonnes) sendMessageCollegue({ nom: s.nom, email: s.email, ...commun })
+          .catch(e => console.error('[mailer] contact (abonné):', e.message));
+      }).catch(e => console.error('[mailer] contact (abonné):', e.message));
+    }
 
     res.json({ ok: true });
   } catch (err) { next(err); }

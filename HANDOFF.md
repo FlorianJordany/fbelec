@@ -10,93 +10,117 @@
 
 ## 🔄 Dernière session
 
-- **Date :** 2026-07-13 (session longue, entamée fin juin)
+- **Date :** 2026-07-30 (sessions du 21 au 30 juillet)
 - **Développeur :** Florian
 
 ### Ce qui a été fait
 
-- **Sociétés + rôles Basic/Admin** (migration `2026-06-27_societes_type.sql`) : table
-  `fbelec.societes`, colonnes `clients.societe_id` / `role_societe`. Un compte « Admin » de
-  société **voit et gère les chantiers de tous les comptes de sa société** (helper
-  `allowedClientIds()` dans `routes/client/chantiers.js`, appliqué à TOUTES les routes client) ;
-  les cartes affichent « Créé par X » pour les chantiers des autres comptes.
-  **Page dédiée « Sociétés »** (bouton dans la barre de Chantiers suivis) : liste compacte,
-  renommage (PUT `/admin/societes/:id`), suppression, et modale 👤 « utilisateurs de la
-  société » avec rôle modifiable. Rattachement d'un compte = page Clients (modales créer/modifier).
-- **Références obligatoires** à la création (admin + client) : `reference_client` (sous
-  Client / 1ᵉʳ champ) + `reference_facturation` (si facturation différente), placeholder
-  « Société ou nom du client », validées backend (migration `2026-06-26_references.sql`).
-- **Type Monophasé/Triphasé obligatoire** (`chantiers.puissance_type`, whitelist backend)
-  à côté de la puissance, affiché partout.
-- **Fiche admin chantier** : bloc « Informations du dossier » (client, adresse, facturation,
-  références, puissance+type, durée, date, terrain) au-dessus de l'Avancement.
-- **Étapes : réordonnancement par glisser-déposer** (+ flèches ▲▼ tactiles). Plus de champ
-  « ordre » ; nouvel élément = fin de liste ; `PUT /etapes/reorder` en **2 passes** (index unique).
-- **Téléchargement des photos** (admin + client + lightbox) via `downloadFile()` fetch+blob
-  (cross-origin oblige).
-- **Reload complet à la connexion** (plus de cache mémoire ; parcours « changer mdp » préservé).
-- **Chantiers suivis** : tri par défaut **par société** ; cellule Chantier = **référence en
-  1ʳᵉ ligne (noir+gras)**, adresse en 2ᵉ ; le **filtre colonne Chantier porte sur la référence**
-  (liste + recherche interne). Colonne Société ajoutée puis **retirée** à la demande.
-- **Gestion clients** : colonne Société (+ badge Admin), tri par défaut société, **barre de
-  recherche** (nom/email/tél/société), filtres du haut (société dont « Sans société », rôle)
-  et **filtres de colonnes** (ColFilter sur Client/E-mail/Société/Chantiers).
-- **CSS mobile** : fix majeur sur Chantiers suivis (page à 465px sur 375 avec vraies données —
-  `min-width:0` étendu aux `<span>` + `StatusPill` borné avec ellipsis) ; champs uniformisés
-  (`div[style*="max-width"]{max-width:100%}` ≤640px). Vérifié à 375px avec données mockées.
-- WordPress `fbelec.fr` : boutons « Espace client / Nous contacter » confirmés en ligne
-  (l'invisibilité était du cache Cloudflare).
+- **Mandat EDF PDF prérempli** : service `backend/src/services/mandat.js` (pdf-lib, dessin par
+  coordonnées sur `backend/assets/mandat-vierge.pdf`). Contenu final : mandant = référence
+  client ; « autorise **Société F.B ELEC ( Monsieur Franck BORDIER )** » ; RGPD tout coché ;
+  souscription/résiliation = **seule la case « branchement provisoire »** cochée ; adresse du
+  chantier ; fait à + date du jour + 1 exemplaire ; **signature (tampon détouré) côté
+  mandataire** (x:337). **Généré automatiquement à la création** et rangé dans les documents du
+  chantier **sauf si un mandat est uploadé** (`mandat_fourni`) ; bouton de téléchargement au
+  récapitulatif (masqué si mandat fourni).
+- **Contact facturation** (migration `2026-07-21_facturation_contact.sql`) : si facturation
+  « différente », référence préremplie (modifiable) + champs Téléphone/Mail facultatifs.
+  Mandat retiré des documents obligatoires ; **documents obligatoires réellement bloquants**
+  côté admin aussi (gate `canStep3`).
+- **Fil de messages client ↔ FB ELEC** (migration `2026-07-22_commentaire_notes_client.sql`) :
+  `POST /api/client/contact` accepte `chantier_id` (anti-IDOR via `allowedClientIds`) → message
+  stocké dans `fbelec.notes` (`de_client=TRUE`, auteur = nom serveur). Fil affiché des deux
+  côtés avec le **composant `Notes` partagé** (exporté de `client.jsx`, importé par `admin.jsx` ;
+  avatars : initiales grises = client, « FB » jaune = FB ELEC). L'admin répond via la carte
+  « Message au client » existante. E-mail enrichi (société, tél, chantier, références) +
+  bouton « Voir et répondre sur le site » → `PUBLIC_URL?chantier=<id>`.
+- **Commentaire de création** : textarea facultatif à l'étape 2 Documents (client + admin),
+  colonne `chantiers.commentaire`, affiché au récap et dans « Informations du dossier ».
+- **Référence client en avant côté client** : cartes « Mes chantiers » et gros titre de la
+  fiche = `reference_client`, **repli sur l'adresse si absente** (adresse toujours en
+  sous-ligne). Idem « Vue côté client » admin (+ `de_client` ajouté à son détail).
+- **Fix « Référence déjà utilisée » (409)** : la création insérait une référence provisoire
+  fixe `'TMP'` (unique en base) → remplacée par `'TMP-'||md5(random()::text)` (admin + client),
+  validations sorties de la transaction, log de la contrainte réelle en cas de 23505.
+  Cause déclenchante sur DEV : **base importée de prod sans resync des séquences** → tous les
+  `setval` passés le 2026-07-30.
+- **Correctifs** : login admin tolère les espaces du clavier mobile (trim) ; largeur en-tête
+  fiche (`.fb-wrap{width:100%}`) ; libellé mandat court « Généré automatiquement si absent ».
+- **Écran de connexion : vraie cause affichée** (fin de journée) : « Identifiants incorrects »
+  masquait TOUTE erreur (c'est ce qui a fait croire à un mauvais mot de passe alors qu'un
+  wifi d'hôtel bloquait l'API). Désormais : serveur injoignable/portail captif → message
+  réseau ; 429 anti-bruteforce → « Trop de tentatives… » ; 401 → « Identifiants incorrects ».
+  (`client.jsx` / `tryLogin`, 4 cas vérifiés en preview, **déployé en prod**).
+- **Référence client dans les e-mails de notification** (fin de journée) : objet + corps de
+  `sendEtapeAvancement` et `sendNouvelleNote` incluent `reference_client` (rien si vide).
+  Fichiers : `mailer.js`, `routes/admin/chantiers.js`, `routes/admin/notes.js`.
+- **Git/GitHub** : repo `FlorianJordany/fbelec`, branches `main` + `DEV`. PR #1 mergée ;
+  **PR #2 ouverte** (contient les commits `806cbac` + `980d5ca` = tout le travail ci-dessus).
+- **Déploiement : PROD et DEV à jour et validés au 2026-07-30** (base, backend complet avec
+  pdf-lib + assets, front). Incident prod du 30/07 (`/health` 503 = connexion DB) résolu.
 
 ### En cours / pas terminé
 
-- **Dernier build front à déployer/confirmer** : les toutes dernières retouches (référence en
-  gras 1ʳᵉ ligne, filtre colonne sur la ref, filtres colonnes Gestion clients) sont buildées
-  (`frontend/dist/` à jour) mais le déploiement n'a **pas été confirmé**. Commandes : scp
-  `dist/*` → `~/suividechantier.fbelec.fr/` + **chmod 755/644**.
-- **Migrations** : `terrain` confirmée en prod ; `societes_type` visiblement passée (les
-  sociétés fonctionnent en prod d'après les captures) ; **vérifier** que `archive`,
-  `etapes_date` et `references` sont bien toutes passées (idempotentes — re-passables sans risque).
-- **SMTP toujours non configuré** en prod → aucun e-mail (avancement d'étape, bienvenue,
-  reset) ne part. Variables à saisir dans cPanel → Setup Node.js App : `SMTP_HOST/PORT/SECURE/
-  USER/PASS/FROM` + `CONTACT_EMAIL`, puis `touch tmp/restart.txt`.
-- `apercu-guide.html` (racine) toujours à supprimer (aperçu local de Tony, non déployé).
+- **2 retouches non commitées** (login messages d'erreur + référence dans les e-mails) :
+  à committer sur `DEV` (elles rejoindront la PR #2). Le déploiement backend des e-mails
+  (3 fichiers + restart, DEV et PROD — commandes données en fin de conversation) restait
+  **à confirmer** ; la retouche login est en prod mais **pas encore redéployée sur DEV**
+  (le `dist/` local est un build **prod**).
+- **PR #2 à merger** vers `main` sur GitHub (tout est déjà déployé et validé).
+- **SMTP toujours non configuré** (prod ET dev) → aucun e-mail ne part (le fil de messages
+  fonctionne quand même : stockage en base). Variables cPanel : `SMTP_HOST/PORT/SECURE/USER/
+  PASS/FROM` + `CONTACT_EMAIL`, puis restart.
+- **AutoSSL DEV impossible** : la zone `universe.wf` répond SERVFAIL aux requêtes CAA
+  (côté o2switch). Voie A = ticket o2switch ; voie B = sous-domaines dev sous `fbelec.fr`
+  (OVH A → 109.234.166.144 + Create Domain + AutoSSL + refaire `.env`/CORS/build).
+- `apercu-guide.html` (racine) toujours à supprimer.
 
 ### Prochaines étapes
 
-1. Déployer/confirmer le dernier build front (+ backend `routes/admin/chantiers.js` si la
-   version en ligne ne renvoie pas encore `societe_nom`/`reference_client` dans la liste).
-2. **Configurer le SMTP** et tester un mail réel (changer l'état d'une étape).
-3. Repasser les 4 migrations idempotentes pour être sûr (archive, etapes_date, references,
-   societes_type), puis QA rapide : société admin voit les chantiers de ses collègues,
-   drag & drop étapes, téléchargement photo, création chantier (type + références bloquants).
-4. Sécurité en attente : rotation mot de passe DB + `JWT_SECRET`, `CORS_ORIGIN` exact.
+1. Merger la PR #2.
+2. Configurer le SMTP puis tester en réel : message client → e-mail enrichi + bouton
+   « Voir et répondre » ; avancement d'étape → e-mail client.
+3. HTTPS sur l'environnement DEV (voie A ou B ci-dessus).
+4. Sécurité en attente : rotation mot de passe DB + `JWT_SECRET`, suppression
+  `apercu-guide.html`, dette URL logo codée en dur (`ui.jsx`/`client.jsx`).
 
 ### Pièges / décisions / à savoir
 
-- **Anti-IDOR sociétés** : toute NOUVELLE route client doit passer par `allowedClientIds()`
-  (jamais `client_id = req.clientId` en dur) sinon un admin de société perdra l'accès — ou
-  pire, un basic verra trop. Rôles whitelistés backend (`basic`/`admin`).
-- **Étapes** : ne pas réintroduire de saisie manuelle d'« ordre » ; le reorder DOIT rester en
-  2 passes (index unique `ordre` sur étapes actives → un swap direct casse en 23505).
-- **ColFilter dans une Card** : la carte doit être `overflow:visible` + wrapper interne
-  arrondi pour les lignes (sinon les menus déroulants sont coupés) — pattern appliqué sur
-  Chantiers suivis ET Gestion clients.
-- **Méthode de vérif front** : les listes vides masquent les bugs → en preview, **mocker
-  `window.fetch`** avec des données réalistes (labels longs) puis mesurer débordements/styles.
-  C'est ce qui a permis d'attraper le bug 465px et de tout valider sans API locale.
-- **Règle CSS mobile** : `.fb-wrap div,.fb-wrap span{min-width:0}` — les cellules de listes
-  sont des `<span>`, ne pas l'oublier pour de futures listes.
-- **Pièges o2switch/Drive inchangés** : `chmod 755/644` après chaque scp (sinon 403) ;
-  supprimer `frontend/public/desktop.ini` avant build ; psql/node en SSH bash depuis `cd ~`.
-- **Dette** : URL `https://suividechantier.fbelec.fr` codée en dur (clic logo, `ui.jsx` +
-  `client.jsx`). L'admin de société peut aussi **modifier** les chantiers de sa société
-  (décision par défaut, restreignable en lecture seule sur demande).
+- **Deux builds front distincts** : prod = `npm run build` (`.env.production` →
+  `//api-suividechantier.fbelec.fr`) ; DEV = `npx vite build --mode development` (`.env` →
+  `//fbelec-api.sc1qize9193.universe.wf`). `dist/` ne contient qu'un seul build à la fois
+  (actuellement **prod**) — vérifier avec `grep sc1qize9193 dist/assets/*.js` avant un scp prod.
+- **`backend/assets/` est gitignoré** (mandat vierge + signature scannée) → à **scp
+  manuellement** vers chaque serveur, comme le `.env`.
+- **Base DEV importée de prod** : après toute réimportation, **repasser les `setval`** de
+  toutes les séquences, sinon 409/23505 trompeurs (« Référence déjà utilisée » couvre tout
+  doublon, y compris la pkey ; le log `[chantiers] doublon 23505:` dans `stderr.log` donne la
+  contrainte réelle).
+- **Fil de messages** : toute nouvelle SELECT de notes doit inclure `de_client` (3 endroits
+  faits : client, admin, vue-client). Le composant `Notes` est partagé — le modifier change
+  les deux côtés.
+- **Anti-IDOR** : toute nouvelle route client passe par `allowedClientIds()` (jamais
+  `client_id = req.clientId` en dur).
+- **Vérif front sans API** : mocker `window.fetch` en preview avec des données réalistes ;
+  pour naviguer le SPA malgré le reload au login, passer par le parcours `must_change_code`
+  (pas de reload) ou réutiliser le token localStorage existant.
+- **Pièges o2switch/Drive inchangés** : `chmod 755/644` après chaque scp (sinon 403/page
+  blanche) ; supprimer les `desktop.ini` avant chaque build ; npm install sur H: tronque des
+  fichiers → installer sur C: puis copier ; venv Node :
+  `source ~/nodevenv/<dossier-api>/22/bin/activate`.
 
 ---
 
 ## 🗄️ Historique des sessions précédentes
 
 <!-- /passation descend ici l'ancienne entrée à chaque nouvelle passation. -->
+
+- **2026-07-13 — Florian (sociétés, listes, mobile)** : sociétés + rôles Basic/Admin (visibilité
+  société via `allowedClientIds()`, page dédiée « Sociétés »), références + type Mono/Triphasé
+  obligatoires, bloc « Informations du dossier », drag & drop étapes (reorder 2 passes),
+  téléchargement photos, reload au login, Chantiers suivis (réf noir/gras 1ʳᵉ ligne + filtres),
+  Gestion clients (recherche + filtres colonnes), gros fix CSS mobile (min-width:0 sur spans,
+  StatusPill ellipsis). Boutons WordPress confirmés (cache Cloudflare).
 
 - **2026-06-26 — Florian (bouton Espace client WordPress)** : bouton « ESPACE CLIENT » ajouté
   dans l'en-tête du site vitrine `fbelec.fr` → header codé en dur dans `header.php` du thème

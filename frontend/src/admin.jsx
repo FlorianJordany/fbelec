@@ -1,7 +1,8 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { apiFetch, chantierBadge, downloadFile, downloadPdf, CAT_LABELS, DOC_OPTIONS } from './api.js';
+import { apiFetch, chantierBadge, downloadFile, downloadPdf, CAT_LABELS, CAT_REQUIRED, DOC_OPTIONS, libelleGps } from './api.js';
 import { Icon, Btn, StatusPill, Card, Field, SectionTitle, Toast, useToast,
-         ColFilter, SearchableSelect, Modal, AppHeader, AddressAutocomplete, Footer } from './ui.jsx';
+         ColFilter, SearchableSelect, Modal, AppHeader, AddressAutocomplete, CarteGps, GpsLinks, Footer } from './ui.jsx';
+import { Notes, NotificationsChantier } from './client.jsx';
 
 // ─── Documents (admin) ───────────────────────────────────────
 function AdminDocumentsSection({ chantierId, docs, reload, showToast }) {
@@ -223,6 +224,10 @@ export function AdminNouveauChantier({ go, openChantier, onLogout, isAdmin }) {
   const [dureeUnite,setDureeUnite]=useState('semaines');
   const [docs,setDocs]=useState({permis_construire:null,plan_situation:null,plan_masse:null,mandat:null});
   const [photos,setPhotos]=useState([]);
+  const [commentaire,setCommentaire]=useState('');
+  const [gpsMode,setGpsMode]=useState(false);
+  const [gps,setGps]=useState(null);
+  const [factForcee,setFactForcee]=useState(false);
   const [loading,setLoading]=useState(false);
   const [err,setErr]=useState('');
   const [step,setStep]=useState(1);
@@ -237,13 +242,26 @@ export function AdminNouveauChantier({ go, openChantier, onLogout, isAdmin }) {
   const addPhotos=e=>setPhotos(p=>[...p,...Array.from(e.target.files)]);
   const removePhoto=i=>setPhotos(p=>p.filter((_,j)=>j!==i));
 
+  // Sans adresse, le point GPS la remplace ; la facturation doit alors être une vraie adresse postale.
+  // L'adresse éventuellement tapée est conservée (non envoyée en mode GPS) pour un retour sans perte.
+  const basculerGps=()=>{
+    if (!gpsMode) {
+      setGpsMode(true);
+      if (factType==='identique') { setFactType('differente'); setFactForcee(true); if(!factReference) setFactReference(form.reference_client); }
+    } else {
+      setGpsMode(false); setGps(null);
+      if (factForcee) { setFactType('identique'); setFactForcee(false); }
+    }
+  };
+  const adresseChantier = gpsMode ? (gps?libelleGps(gps):'') : form.adresse;
   const adresseFact = factType==='identique'
     ? [form.adresse,form.code_postal,form.commune].filter(Boolean).join(', ')
     : [factAdresse,factCp,factCommune].filter(Boolean).join(', ');
   const dureeFinal = dureeMontant ? `${dureeMontant} ${dureeUnite}` : '';
-  const canStep2 = form.client_id&&form.adresse&&form.commune&&form.puissance_demandee&&form.puissance_type
+  const canStep2 = form.client_id&&adresseChantier&&form.commune&&form.puissance_demandee&&form.puissance_type
     &&form.date_debut_chantier&&dureeMontant&&form.terrain_viabilise&&form.reference_client.trim()
     &&(factType==='identique'||(factAdresse&&factCommune&&factReference.trim()));
+  const canStep3 = CAT_REQUIRED.every(k=>docs[k]);
 
   async function submit() {
     setErr(''); setLoading(true);
@@ -255,6 +273,10 @@ export function AdminNouveauChantier({ go, openChantier, onLogout, isAdmin }) {
         reference_facturation: factType==='differente'?factReference:'',
         facturation_telephone: factType==='differente'?factTelephone:'',
         facturation_email: factType==='differente'?factEmail:'',
+        mandat_fourni: !!docs.mandat,
+        commentaire: commentaire.trim(),
+        adresse: gpsMode?'':form.adresse,
+        gps_lat: gpsMode&&gps?gps.lat:null, gps_lng: gpsMode&&gps?gps.lng:null,
       }});
       for (const [cat,file] of Object.entries(docs)) {
         if (!file) continue;
@@ -331,12 +353,20 @@ export function AdminNouveauChantier({ go, openChantier, onLogout, isAdmin }) {
               placeholder="Société ou nom du client"/>
           </div>
           <div>
-            <label style={labelSt}>Adresse du chantier *</label>
-            <AddressAutocomplete value={form.adresse}
-              onChange={v=>setForm(f=>({...f,adresse:v}))}
-              onSelect={a=>setForm(f=>({...f,adresse:a.adresse,
-                code_postal:a.code_postal||f.code_postal, commune:a.commune||f.commune}))}
-              inputStyle={inputSt} placeholder="ex. 12 rue des Acacias…"/>
+            <label style={labelSt}>{gpsMode?'Emplacement du chantier *':'Adresse du chantier *'}</label>
+            {gpsMode
+              ? <CarteGps value={gps} onChange={setGps} commune={form.commune} codePostal={form.code_postal}
+                  onLocalite={l=>setForm(f=>({...f,commune:l.commune||f.commune,code_postal:l.code_postal}))}/>
+              : <AddressAutocomplete value={form.adresse}
+                  onChange={v=>setForm(f=>({...f,adresse:v}))}
+                  onSelect={a=>setForm(f=>({...f,adresse:a.adresse,
+                    code_postal:a.code_postal||f.code_postal, commune:a.commune||f.commune}))}
+                  inputStyle={inputSt} placeholder="ex. 12 rue des Acacias…"/>}
+            <button type="button" onClick={basculerGps}
+              style={{marginTop:8,display:'inline-flex',alignItems:'center',gap:6,background:'none',border:'none',
+                padding:0,cursor:'pointer',color:'var(--jaune-deep)',fontFamily:'var(--font-head)',fontWeight:700,fontSize:13.5}}>
+              <Icon name="pin" size={15}/>{gpsMode?"J'ai une adresse : la saisir":"Pas encore d'adresse ? Placer un point sur la carte"}
+            </button>
           </div>
           <div className="fb-form2" style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:14}}>
             <div><label style={labelSt}>Commune *</label>
@@ -357,9 +387,12 @@ export function AdminNouveauChantier({ go, openChantier, onLogout, isAdmin }) {
             <select style={inputSt} value={factType}
               onChange={e=>{ const v=e.target.value; setFactType(v);
                 if(v==='differente'&&!factReference)setFactReference(form.reference_client); }}>
-              <option value="identique">Identique à l'adresse du chantier</option>
+              <option value="identique" disabled={gpsMode}>Identique à l'adresse du chantier</option>
               <option value="differente">Différente</option>
             </select>
+            {gpsMode&&<div style={{marginTop:5,fontSize:12.5,color:'var(--muted)'}}>
+              Chantier localisé par point GPS : indiquez une adresse postale de facturation.
+            </div>}
           </div>
           {factType==='differente'&&<>
             <div>
@@ -447,6 +480,7 @@ export function AdminNouveauChantier({ go, openChantier, onLogout, isAdmin }) {
         <div style={{display:'grid',gap:14}}>
           {Object.entries(CAT_LABELS).map(([cat,lbl])=>{
             const file=docs[cat];
+            const req=CAT_REQUIRED.includes(cat);
             return <div key={cat} style={{display:'flex',alignItems:'center',gap:12,padding:'14px 16px',
               background:file?'color-mix(in srgb,var(--c-done) 8%,#fff)':'#fff',
               border:`1px solid ${file?'color-mix(in srgb,var(--c-done) 40%,transparent)':'var(--line)'}`,
@@ -457,10 +491,12 @@ export function AdminNouveauChantier({ go, openChantier, onLogout, isAdmin }) {
               </div>
               <div style={{flex:1,minWidth:0}}>
                 <div style={{fontFamily:'var(--font-head)',fontWeight:700,fontSize:14.5,color:'var(--ink)'}}>
-                  {lbl}
+                  {lbl}{req&&<span style={{color:'var(--c-blocked)',marginLeft:4}}>*</span>}
                 </div>
                 <div style={{fontSize:12.5,color:'var(--muted)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
-                  {file?file.name:'Aucun fichier sélectionné'}
+                  {file?file.name
+                    :cat==='mandat'?'Généré automatiquement si absent'
+                    :'Aucun fichier sélectionné'}
                 </div>
               </div>
               <label style={{cursor:'pointer',padding:'8px 14px',border:'1px solid var(--line)',borderRadius:'var(--r-input)',
@@ -489,9 +525,15 @@ export function AdminNouveauChantier({ go, openChantier, onLogout, isAdmin }) {
             <input type="file" style={{display:'none'}} accept="image/*" multiple onChange={addPhotos}/>
           </label>
         </div>
+        <div style={{marginTop:18,borderTop:'1px solid var(--line)',paddingTop:18}}>
+          <label style={labelSt}>Commentaire (optionnel)</label>
+          <textarea value={commentaire} onChange={e=>setCommentaire(e.target.value)} rows={3}
+            placeholder="Informations importantes pour le chantier…"
+            style={{...inputSt,resize:'vertical',lineHeight:1.5,fontSize:14.5}}/>
+        </div>
         <div style={{marginTop:22,display:'flex',gap:12,justifyContent:'flex-end'}}>
           <Btn variant="ghost" onClick={()=>setStep(1)}>Retour</Btn>
-          <Btn variant="dark" iconR="chevR" onClick={()=>setStep(3)}>Continuer</Btn>
+          <Btn variant="dark" iconR="chevR" disabled={!canStep3} onClick={()=>canStep3&&setStep(3)}>Continuer</Btn>
         </div>
       </Card>}
 
@@ -501,7 +543,7 @@ export function AdminNouveauChantier({ go, openChantier, onLogout, isAdmin }) {
           {[
             ['Client',clients.find(c=>String(c.id)===String(form.client_id))?.nom||'—'],
             ['Référence',form.reference_client||'—'],
-            ['Adresse',`${form.adresse}, ${form.commune}${form.code_postal?' '+form.code_postal:''}`],
+            ['Adresse',`${adresseChantier}, ${form.commune}${form.code_postal?' '+form.code_postal:''}`],
             ['Adresse facturation',adresseFact],
             ['Puissance',`${form.puissance_demandee} kVA — ${form.puissance_type==='monophase'?'Monophasé':'Triphasé'}`],
             ['Terrain viabilisé',form.terrain_viabilise==='oui'?'Oui':'Non'],
@@ -529,8 +571,13 @@ export function AdminNouveauChantier({ go, openChantier, onLogout, isAdmin }) {
             <span style={{fontSize:14,color:'var(--ink)'}}>{photos.length} photo(s)</span>
           </div>}
         </div>
-        {/* Mandat EDF prérempli */}
-        <div style={{borderTop:'1px solid var(--line)',paddingTop:16,marginBottom:16}}>
+        {commentaire.trim()&&<div style={{borderTop:'1px solid var(--line)',paddingTop:16,marginBottom:16}}>
+          <div style={{fontSize:13,color:'var(--muted)',fontFamily:'var(--font-head)',fontWeight:700,
+            textTransform:'uppercase',letterSpacing:'.05em',marginBottom:8}}>Commentaire</div>
+          <p style={{margin:0,fontSize:14.5,color:'var(--ink)',lineHeight:1.55,whiteSpace:'pre-wrap'}}>{commentaire.trim()}</p>
+        </div>}
+        {/* Mandat EDF prérempli — masqué si un mandat a été fourni à l'étape Documents */}
+        {!docs.mandat&&<div style={{borderTop:'1px solid var(--line)',paddingTop:16,marginBottom:16}}>
           <div style={{display:'flex',alignItems:'center',gap:12,flexWrap:'wrap'}}>
             <div style={{flex:1,minWidth:220}}>
               <div style={{fontFamily:'var(--font-head)',fontWeight:700,fontSize:14.5,color:'var(--ink)'}}>Mandat EDF</div>
@@ -543,14 +590,14 @@ export function AdminNouveauChantier({ go, openChantier, onLogout, isAdmin }) {
               try {
                 await downloadPdf('/api/admin/chantiers/mandat',{
                   reference: form.reference_client,
-                  adresse: [form.adresse, form.code_postal, form.commune].filter(Boolean).join(', '),
+                  adresse: [adresseChantier, form.code_postal, form.commune].filter(Boolean).join(', '),
                   ville: form.commune,
                 }, `Mandat-EDF-${(form.reference_client||'chantier').replace(/[^\w-]+/g,'_')}.pdf`);
               } catch(e){ setErr(e.message); }
               finally{ setMandatLoading(false); }
             }}>Télécharger le mandat (PDF)</Btn>
           </div>
-        </div>
+        </div>}
         {err&&<p style={{margin:'0 0 12px',color:'var(--c-blocked)',fontSize:14}}>{err}</p>}
         <div style={{display:'flex',gap:12,justifyContent:'flex-end'}}>
           <Btn variant="ghost" onClick={()=>setStep(2)}>Retour</Btn>
@@ -621,9 +668,11 @@ export function AdminList({ go, openChantier, onLogout, isAdmin }) {
     if (filtres.statut && (c.etape_courante||'—')!==filtres.statut) return false;
     return true;
   }).sort((a,b)=>{
-    // Tri par défaut sur la société (comptes sans société en dernier), puis client.
+    // Nouveaux chantiers clients (jamais ouverts) épinglés en haut ;
+    // ensuite tri par société (comptes sans société en dernier), puis client.
+    const na=a.vu_admin===false?0:1, nb=b.vu_admin===false?0:1;
     const sa=a.societe_nom||'￿', sb=b.societe_nom||'￿';
-    return sa.localeCompare(sb,'fr') || (a.client_nom||'').localeCompare(b.client_nom||'','fr');
+    return na-nb || sa.localeCompare(sb,'fr') || (a.client_nom||'').localeCompare(b.client_nom||'','fr');
   });
 
   if (loading) return <div style={{minHeight:"100vh",background:"var(--bg-soft)",display:"flex",flexDirection:"column"}}>
@@ -683,12 +732,15 @@ export function AdminList({ go, openChantier, onLogout, isAdmin }) {
           const done=parseInt(c.etapes_done)||0;
           const pct=total>0?Math.round((done/total)*100):0;
           const etapeNum=done<total?done+1:null;
+          const nouveau=c.vu_admin===false;
+          const fond=nouveau?"color-mix(in srgb,var(--jaune) 14%,#fff)":"";
           return <div key={c.id} className="fb-ch-row" style={{display:"grid",gridTemplateColumns:"2fr 1.2fr 1fr 1.3fr 1fr auto",
             gap:12,alignItems:"center",padding:"12px 16px",borderBottom:"1px solid var(--line)",
-            cursor:"pointer",transition:"background .12s"}}
+            cursor:"pointer",transition:"background .12s",background:fond,
+            boxShadow:nouveau?"inset 4px 0 0 var(--jaune-deep)":undefined}}
             onClick={()=>openChantier(c.id)}
             onMouseEnter={e=>e.currentTarget.style.background="var(--bg-soft)"}
-            onMouseLeave={e=>e.currentTarget.style.background=""}>
+            onMouseLeave={e=>e.currentTarget.style.background=fond}>
             {/* Chantier */}
             <span>
               <div style={{display:"flex",alignItems:"center",gap:10}}>
@@ -699,6 +751,7 @@ export function AdminList({ go, openChantier, onLogout, isAdmin }) {
                       display:"grid",placeItems:"center",flex:"0 0 auto"}}>
                      <Icon name="camera" size={17} style={{color:"var(--muted)"}}/></div>}
                 <div style={{minWidth:0}}>
+                  {nouveau&&<span className="fb-badge-new" style={{marginBottom:3}}>Nouveau</span>}
                   {c.reference_client&&<div style={{fontFamily:"var(--font-head)",fontSize:13.5,color:"#000",fontWeight:700,
                     whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{c.reference_client}</div>}
                   <div style={{fontFamily:"var(--font-head)",fontWeight:500,fontSize:12.5,color:"var(--slate)",
@@ -907,6 +960,7 @@ export function AdminChantier({ chantierId, go, onLogout, isAdmin }) {
               ["Client", c.client_nom],
               ["Référence client", c.reference_client],
               ["Adresse du chantier", [c.adresse, c.code_postal, c.commune].filter(Boolean).join(', ')],
+              ["Localisation GPS", c.gps_lat!=null&&c.gps_lng!=null?<GpsLinks lat={c.gps_lat} lng={c.gps_lng}/>:null],
               ["Adresse de facturation", c.adresse_facturation],
               ["Référence facturation", c.reference_facturation],
               ["Téléphone facturation", c.facturation_telephone],
@@ -917,6 +971,7 @@ export function AdminChantier({ chantierId, go, onLogout, isAdmin }) {
               ["Date de début souhaitée", c.date_debut_chantier?.slice(0,10)],
               ["Terrain viabilisé", c.terrain_viabilise===true?"Oui":c.terrain_viabilise===false?"Non":null],
               ["Type de prestation", c.type_prestation],
+              ["Commentaire", c.commentaire],
             ].filter(([,v])=>v).map(([k,v])=><div key={k} style={{minWidth:0}}>
               <div style={{fontSize:11.5,color:"var(--muted)",textTransform:"uppercase",letterSpacing:".06em",fontWeight:700,marginBottom:3}}>{k}</div>
               <div style={{fontSize:14.5,color:"var(--ink)",fontWeight:500,wordBreak:"break-word"}}>{v}</div>
@@ -1061,13 +1116,14 @@ export function AdminChantier({ chantierId, go, onLogout, isAdmin }) {
           <div style={{marginTop:12}}>
             <Btn variant="primary" full icon="check" onClick={publishNote}>Publier côté client</Btn>
           </div>
-          {c.notes.length>0&&<div style={{marginTop:18,display:"grid",gap:10}}>
-            {c.notes.slice(0,3).map(n=><div key={n.id} style={{fontSize:13.5,color:"var(--slate)",
-              padding:"10px 13px",background:"var(--bg-soft)",borderRadius:"var(--r-input)"}}>
-              <span style={{fontWeight:700,color:"var(--ink)"}}>{n.date_affichee||"Aujourd'hui"} — </span>{n.texte}
-            </div>)}
+          {c.notes.length>0&&<div style={{marginTop:18}}>
+            <Notes notes={c.notes.slice(0,5)}/>
           </div>}
         </Card>
+
+        {/* Collègues du client abonnés aux notifications */}
+        <NotificationsChantier key={chantierId} admin chantierId={chantierId} membres={c.abonnes_gestion||[]}
+          sansSociete={!c.client_societe_id} reload={reload} showToast={showToast}/>
       </div>
     </main>
     <Footer/>
@@ -1394,7 +1450,8 @@ export function AdminSocietes({ go, onLogout, isAdmin }) {
         <h1 style={{margin:"12px 0 4px",fontFamily:"var(--font-display)",fontWeight:700,fontSize:36,
           textTransform:"uppercase",color:"var(--ink)"}}>Sociétés</h1>
         <p style={{margin:0,color:"var(--slate)",fontSize:15}}>
-          Regroupez vos comptes clients par société. Un compte « Admin » voit tous les chantiers de sa société.
+          Regroupez vos comptes clients par société. Un compte « Admin » voit et gère tous les chantiers de sa société.
+          Sur chaque chantier, son créateur, l'admin de la société ou FB ELEC choisit les collègues qui en reçoivent les notifications.
         </p>
       </div>
 
@@ -1729,7 +1786,7 @@ function ChantierCardVue({ c, onOpen }) {
         <div style={{fontSize:11,color:"var(--jaune-deep)",fontWeight:700,textTransform:"uppercase",letterSpacing:".06em",marginBottom:3}}>
           {c.client_nom}
         </div>
-        <h3 style={{margin:"0 0 4px",fontFamily:"var(--font-head)",fontWeight:700,fontSize:17,color:"var(--ink)"}}>{c.nom}</h3>
+        <h3 style={{margin:"0 0 4px",fontFamily:"var(--font-head)",fontWeight:700,fontSize:17,color:"var(--ink)"}}>{c.reference_client||c.nom}</h3>
         <div style={{fontSize:12.5,color:"var(--slate)",fontFamily:"var(--font-mono)"}}>{c.reference}</div>
       </div>
       <div>

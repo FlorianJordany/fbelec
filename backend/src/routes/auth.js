@@ -116,7 +116,8 @@ router.post('/admin/login', async (req, res, next) => {
     );
     if (!admin) return res.status(401).json({ error: 'Identifiants incorrects.' });
 
-    const ok = await bcrypt.compare(password, admin.password_hash);
+    // trim : les claviers mobiles ajoutent souvent un espace final (autocomplétion)
+    const ok = await bcrypt.compare(String(password).trim(), admin.password_hash);
     if (!ok) return res.status(401).json({ error: 'Identifiants incorrects.' });
 
     const token = makeToken({ sub: admin.id, role: 'admin', schema: 'fbelec' });

@@ -116,6 +116,9 @@ export const CAT_LABELS = {
 };
 export const CAT_REQUIRED = ['permis_construire','plan_situation'];
 
+// Libellé d'adresse d'un chantier localisé par point GPS (identique au backend, utils/validate.js).
+export const libelleGps = p => `Point GPS ${p.lat.toFixed(5)}, ${p.lng.toFixed(5)}`;
+
 export const DOC_OPTIONS = [
   ...Object.entries(CAT_LABELS).map(([k,v])=>({value:k,label:v})),
   {value:'autre',label:'Autre'},

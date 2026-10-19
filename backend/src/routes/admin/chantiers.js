@@ -3,8 +3,9 @@ import fs from 'fs';
 import { pool } from '../../db.js';
 import { toPublicUrl } from '../../middleware/upload.js';
 import { sendEtapeAvancement } from '../../services/mailer.js';
+import { destinatairesAbonnes, membresAbonnes, lireClientIds, remplacerAbonnes, INT_MAX } from '../../services/abonnes.js';
 import { genererMandat, genererMandatFichier } from '../../services/mandat.js';
-import { str } from '../../utils/validate.js';
+import { str, gps, libelleGps } from '../../utils/validate.js';
 
 const router = Router();
 
@@ -32,7 +33,7 @@ router.get('/', async (req, res, next) => {
     const archived = req.query.archived === '1' || req.query.archived === 'true';
     const { rows } = await pool.query(
       `SELECT c.id, c.reference, c.reference_client, c.nom, c.adresse, c.commune, c.statut,
-              c.derniere_maj, c.updated_at, c.actif, c.archive, c.action_requise_titre,
+              c.derniere_maj, c.updated_at, c.actif, c.archive, c.action_requise_titre, c.vu_admin,
               cl.nom AS client_nom, cl.email AS client_email, s.nom AS societe_nom,
               (SELECT COUNT(*) FROM fbelec.chantier_etapes WHERE chantier_id = c.id AND etat = 'done')  AS etapes_done,
               (SELECT COUNT(*) FROM fbelec.chantier_etapes WHERE chantier_id = c.id AND etat <> 'na')   AS etapes_total,
@@ -56,10 +57,17 @@ router.get('/', async (req, res, next) => {
 router.get('/:id', async (req, res, next) => {
   try {
     const { rows: [chantier] } = await pool.query(
-      `SELECT c.*, cl.nom AS client_nom, cl.email AS client_email
+      `SELECT c.*, cl.nom AS client_nom, cl.email AS client_email, cl.societe_id AS client_societe_id
        FROM fbelec.chantiers c JOIN fbelec.clients cl ON cl.id = c.client_id
        WHERE c.id = $1`, [req.params.id]);
     if (!chantier) return res.status(404).json({ error: 'Chantier introuvable.' });
+    // Collègues du client (même société) et leur abonnement aux notifications de ce chantier.
+    chantier.abonnes_gestion = await membresAbonnes(chantier.id, chantier.client_id);
+
+    // Première ouverture par FB ELEC d'un chantier créé par un client → retire le badge « Nouveau ».
+    if (chantier.vu_admin === false) {
+      await pool.query('UPDATE fbelec.chantiers SET vu_admin = TRUE WHERE id = $1 AND vu_admin = FALSE', [chantier.id]);
+    }
 
     const { rows: etapes } = await pool.query(
       `SELECT ce.id, ce.etat, ce.note_admin, ce.masquee, re.avec_date,
@@ -91,9 +99,7 @@ router.get('/:id', async (req, res, next) => {
 
 // POST /api/admin/chantiers
 router.post('/', async (req, res, next) => {
-  const dbClient = await pool.connect();
   try {
-    await dbClient.query('BEGIN');
     const {
       client_id, nom, adresse, commune, code_postal, type_prestation,
       adresse_facturation, puissance_demandee, date_debut_chantier, duree_chantier, terrain_viabilise,
@@ -105,8 +111,12 @@ router.post('/', async (req, res, next) => {
       enedis_type_prestation, enedis_delivery_status, enedis_date_demande,
       enedis_date_etude, enedis_date_travaux, enedis_lat, enedis_lng, enedis_point_arret,
     } = req.body;
-    if (!client_id || !adresse || !commune)
-      return res.status(400).json({ error: 'Champs obligatoires manquants.' });
+    const commentaire = str(req.body.commentaire, { max: 5000, label: 'Commentaire' });
+    // Adresse OU point GPS (le point remplace l'adresse quand elle n'existe pas encore).
+    const point = gps(req.body.gps_lat, req.body.gps_lng);
+    const adresseChantier = (typeof adresse === 'string' && adresse.trim()) || (point && libelleGps(point));
+    if (!client_id || !adresseChantier || !commune)
+      return res.status(400).json({ error: 'Champs obligatoires manquants (adresse du chantier ou point GPS, commune).' });
     if (typeof terrain_viabilise !== 'boolean')
       return res.status(400).json({ error: 'Le champ « Terrain viabilisé » est obligatoire.' });
     if (!['monophase', 'triphase'].includes(puissance_type))
@@ -114,48 +124,62 @@ router.post('/', async (req, res, next) => {
     if (!reference_client?.trim())
       return res.status(400).json({ error: 'Le champ « Référence » est obligatoire.' });
 
-    const chantierNom = nom || `${adresse}, ${commune}`;
+    const chantierNom = nom || `${adresseChantier}, ${commune}`;
 
-    // Insérer d'abord pour obtenir l'ID, puis calculer la référence
-    const { rows: [chantier] } = await dbClient.query(
-      `INSERT INTO fbelec.chantiers
-         (client_id,reference,nom,adresse,commune,code_postal,type_prestation,
-          adresse_facturation,puissance_demandee,date_debut_chantier,duree_chantier,
-          statut,resume,prochaine_action,prochaine_action_qui,prochaine_action_date,
-          action_requise_titre,action_requise_texte,action_requise_cta,derniere_maj,
-          enedis_ref_affaire,enedis_delivery_id,enedis_contrat,enedis_pdl,
-          enedis_type_prestation,enedis_delivery_status,enedis_date_demande,
-          enedis_date_etude,enedis_date_travaux,enedis_lat,enedis_lng,enedis_point_arret,terrain_viabilise,
-          reference_client,reference_facturation,puissance_type,facturation_telephone,facturation_email)
-       VALUES ($1,'TMP',$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37)
-       RETURNING *`,
-      [client_id,chantierNom,adresse,commune,code_postal||null,type_prestation||null,
-       adresse_facturation||null,puissance_demandee||null,date_debut_chantier||null,duree_chantier||null,
-       statut||'prepa',resume||null,prochaine_action||null,prochaine_action_qui||null,prochaine_action_date||null,
-       action_requise_titre||null,action_requise_texte||null,action_requise_cta||null,derniere_maj||null,
-       enedis_ref_affaire||null,enedis_delivery_id||null,enedis_contrat||null,enedis_pdl||null,
-       enedis_type_prestation||null,enedis_delivery_status||null,enedis_date_demande||null,
-       enedis_date_etude||null,enedis_date_travaux||null,enedis_lat||null,enedis_lng||null,enedis_point_arret||null,
-       terrain_viabilise,reference_client.trim(),reference_facturation?.trim()||null,puissance_type,
-       facturation_telephone?.trim()||null,facturation_email?.trim()||null]
-    );
+    let chantier, reference;
+    const dbClient = await pool.connect();
+    try {
+      await dbClient.query('BEGIN');
 
-    // Référence fournie par l'admin ou générée automatiquement
-    const dep = (code_postal || '').replace(/[^0-9]/g,'').slice(0,2).padEnd(2,'X');
-    const vil = commune.normalize('NFD').replace(/[̀-ͯ]/g,'').replace(/[^A-Za-z0-9]/g,'').toUpperCase().slice(0,3).padEnd(3,'X');
-    const reference = req.body.reference?.trim() || `${dep}-${vil}-ADM-${chantier.id}`;
+      // Insérer d'abord pour obtenir l'ID, puis calculer la référence.
+      // Référence provisoire unique côté SQL : une valeur fixe ('TMP') restée en base
+      // après un échec bloquerait toutes les créations suivantes (index unique).
+      ({ rows: [chantier] } = await dbClient.query(
+        `INSERT INTO fbelec.chantiers
+           (client_id,reference,nom,adresse,commune,code_postal,type_prestation,
+            adresse_facturation,puissance_demandee,date_debut_chantier,duree_chantier,
+            statut,resume,prochaine_action,prochaine_action_qui,prochaine_action_date,
+            action_requise_titre,action_requise_texte,action_requise_cta,derniere_maj,
+            enedis_ref_affaire,enedis_delivery_id,enedis_contrat,enedis_pdl,
+            enedis_type_prestation,enedis_delivery_status,enedis_date_demande,
+            enedis_date_etude,enedis_date_travaux,enedis_lat,enedis_lng,enedis_point_arret,terrain_viabilise,
+            reference_client,reference_facturation,puissance_type,facturation_telephone,facturation_email,commentaire,
+            gps_lat,gps_lng)
+         VALUES ($1,'TMP-'||md5(random()::text),$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39,$40)
+         RETURNING *`,
+        [client_id,chantierNom,adresseChantier,commune,code_postal||null,type_prestation||null,
+         adresse_facturation||null,puissance_demandee||null,date_debut_chantier||null,duree_chantier||null,
+         statut||'prepa',resume||null,prochaine_action||null,prochaine_action_qui||null,prochaine_action_date||null,
+         action_requise_titre||null,action_requise_texte||null,action_requise_cta||null,derniere_maj||null,
+         enedis_ref_affaire||null,enedis_delivery_id||null,enedis_contrat||null,enedis_pdl||null,
+         enedis_type_prestation||null,enedis_delivery_status||null,enedis_date_demande||null,
+         enedis_date_etude||null,enedis_date_travaux||null,enedis_lat||null,enedis_lng||null,enedis_point_arret||null,
+         terrain_viabilise,reference_client.trim(),reference_facturation?.trim()||null,puissance_type,
+         facturation_telephone?.trim()||null,facturation_email?.trim()||null,commentaire,
+         point ? point.lat : null, point ? point.lng : null]
+      ));
 
-    await dbClient.query('UPDATE fbelec.chantiers SET reference = $1 WHERE id = $2', [reference, chantier.id]);
-    await dbClient.query('SELECT fbelec.init_etapes($1)', [chantier.id]);
-    await dbClient.query('COMMIT');
+      // Référence fournie par l'admin ou générée automatiquement
+      const dep = (code_postal || '').replace(/[^0-9]/g,'').slice(0,2).padEnd(2,'X');
+      const vil = commune.normalize('NFD').replace(/[̀-ͯ]/g,'').replace(/[^A-Za-z0-9]/g,'').toUpperCase().slice(0,3).padEnd(3,'X');
+      reference = req.body.reference?.trim() || `${dep}-${vil}-ADM-${chantier.id}`;
+
+      await dbClient.query('UPDATE fbelec.chantiers SET reference = $1 WHERE id = $2', [reference, chantier.id]);
+      await dbClient.query('SELECT fbelec.init_etapes($1)', [chantier.id]);
+      await dbClient.query('COMMIT');
+    } catch (err) {
+      await dbClient.query('ROLLBACK');
+      throw err;
+    } finally { dbClient.release(); }
 
     // Mandat EDF prérempli, enregistré parmi les documents du chantier
+    // — sauf si un mandat est fourni dans le formulaire (uploadé juste après).
     // (échec non bloquant : la création reste valide).
-    try {
+    if (req.body.mandat_fourni !== true) try {
       const fichier = await genererMandatFichier({
         chantierId: chantier.id, schema: req.schema,
         reference: reference_client.trim(),
-        adresse: [adresse, code_postal, commune].filter(Boolean).join(', '),
+        adresse: [adresseChantier, code_postal, commune].filter(Boolean).join(', '),
         ville: commune,
       });
       await pool.query(
@@ -167,10 +191,13 @@ router.post('/', async (req, res, next) => {
 
     res.status(201).json({ ...chantier, reference, nom: chantierNom });
   } catch (err) {
-    await dbClient.query('ROLLBACK');
-    if (err.code === '23505') return res.status(409).json({ error: 'Référence déjà utilisée.' });
+    if (err.code === '23505') {
+      // Trace la contrainte réelle (pkey = séquence désynchronisée, pas la référence)
+      console.error('[chantiers] doublon 23505:', err.constraint || '', err.detail || '');
+      return res.status(409).json({ error: 'Référence déjà utilisée.' });
+    }
     next(err);
-  } finally { dbClient.release(); }
+  }
 });
 
 // PUT /api/admin/chantiers/:id
@@ -242,26 +269,59 @@ router.put('/:id/etapes', async (req, res, next) => {
     const changed = req.body.filter(e => oldMap[e.etape_id] !== undefined && oldMap[e.etape_id] !== e.etat);
     if (changed.length) {
       pool.query(
-        `SELECT c.nom AS chantier_nom, cl.nom AS client_nom, cl.email AS client_email
+        `SELECT c.nom AS chantier_nom, c.reference_client, c.client_id, cl.nom AS client_nom, cl.email AS client_email
          FROM fbelec.chantiers c JOIN fbelec.clients cl ON cl.id = c.client_id WHERE c.id = $1`,
         [req.params.id]
       ).then(async ({ rows: [row] }) => {
-        if (!row?.client_email) return;
+        if (!row) return;
         const { rows: labels } = await pool.query(
           'SELECT id, label FROM fbelec.ref_etapes WHERE id = ANY($1)', [changed.map(e => e.etape_id)]
         );
         const labelMap = Object.fromEntries(labels.map(l => [l.id, l.label]));
+        // Collègues abonnés à ce chantier (hors propriétaire, déjà prévenu).
+        const abonnes = await destinatairesAbonnes(req.params.id, [row.client_id]);
         for (const ch of changed) {
-          sendEtapeAvancement({
-            nom: row.client_nom, email: row.client_email, chantierNom: row.chantier_nom,
+          const commun = {
+            chantierNom: row.chantier_nom, referenceClient: row.reference_client,
             etapeLabel: labelMap[ch.etape_id] || 'Étape', etatLabel: ETAT_LABELS[ch.etat] || ch.etat,
             chantierId: req.params.id,
-          }).catch(e => console.error('[mailer] etape:', e.message));
+          };
+          if (row.client_email) sendEtapeAvancement({ nom: row.client_nom, email: row.client_email, ...commun })
+            .catch(e => console.error('[mailer] etape:', e.message));
+          for (const s of abonnes) sendEtapeAvancement({ nom: s.nom, email: s.email, ...commun, pourAbonne: true })
+            .catch(e => console.error('[mailer] etape (abonné):', e.message));
         }
-      }).catch(() => {});
+      }).catch(e => console.error('[mailer] etape:', e.message));
     }
   } catch (err) { await client.query('ROLLBACK'); next(err); }
   finally { client.release(); }
+});
+
+// PUT /api/admin/chantiers/:id/abonnes — FB ELEC choisit les collègues du client (même société)
+// qui reçoivent les notifications de ce chantier. Corps : { client_ids: [entiers] } (remplace la liste).
+router.put('/:id/abonnes', async (req, res, next) => {
+  try {
+    const chantierId = parseInt(req.params.id, 10);
+    if (!Number.isInteger(chantierId) || chantierId <= 0 || chantierId > INT_MAX) {
+      return res.status(404).json({ error: 'Chantier introuvable.' });
+    }
+    const choisis = lireClientIds(req.body);
+    if (!choisis) return res.status(400).json({ error: 'Liste de collaborateurs invalide.' });
+    const { rows: [c] } = await pool.query(
+      `SELECT c.client_id, p.societe_id
+         FROM fbelec.chantiers c JOIN fbelec.clients p ON p.id = c.client_id
+        WHERE c.id = $1`,
+      [chantierId]
+    );
+    if (!c) return res.status(404).json({ error: 'Chantier introuvable.' });
+    if (!c.societe_id) {
+      return res.status(400).json({ error: "Le client n'est rattaché à aucune société." });
+    }
+    if (!await remplacerAbonnes(chantierId, c.client_id, c.societe_id, choisis)) {
+      return res.status(400).json({ error: 'Collaborateur hors de la société, inactif ou propriétaire du chantier.' });
+    }
+    res.json({ ok: true, client_ids: choisis });
+  } catch (err) { next(err); }
 });
 
 // POST /api/admin/chantiers/:id/avancer

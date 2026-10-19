@@ -21,6 +21,21 @@ export function str(value, { required = false, min = 0, max = 2000, label = 'Cha
   return v;
 }
 
+// Point GPS facultatif : les deux coordonnées (nombres) ou aucune. Renvoie {lat,lng} ou null.
+export function gps(lat, lng) {
+  const vide = v => v === undefined || v === null || v === '';
+  if (vide(lat) && vide(lng)) return null;
+  if (typeof lat !== 'number' || typeof lng !== 'number'
+      || !Number.isFinite(lat) || !Number.isFinite(lng)
+      || lat < -90 || lat > 90 || lng < -180 || lng > 180) bad('Point GPS invalide.');
+  return { lat, lng };
+}
+
+// Libellé stocké dans chantiers.adresse quand le chantier est localisé par point GPS.
+export function libelleGps({ lat, lng }) {
+  return `Point GPS ${lat.toFixed(5)}, ${lng.toFixed(5)}`;
+}
+
 // E-mail : format basique + longueur bornée.
 export function email(value, { required = true } = {}) {
   const v = str(value, { required, max: 254, label: 'E-mail' });
