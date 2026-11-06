@@ -5,6 +5,11 @@
 // ════════════════════════════════════════════════════════
 import 'dotenv/config';
 import app from './src/server.js';
+import { rattraperFormats } from './src/services/formats.js';
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`✅ Backend FB ELEC démarré sur le port ${PORT}`));
+app.listen(PORT, () => {
+  console.log(`✅ Backend FB ELEC démarré sur le port ${PORT}`);
+  // Formats d'affichage manquants des photos déjà en ligne, en arrière-plan.
+  setTimeout(() => rattraperFormats().catch(e => console.error('[formats]', e.message)), 5000);
+});

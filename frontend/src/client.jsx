@@ -404,7 +404,7 @@ function ChantierCard({ c, onOpen }) {
   return <Card pad={0} hover onClick={onOpen} style={{overflow:"hidden",display:"flex",flexDirection:"column"}}>
     <div style={{position:"relative",height:150,background:"var(--bg-soft)",overflow:"hidden"}}>
       {c.photo_couverture
-        ?<img src={c.photo_couverture} alt="" className="fb-img" style={{width:"100%",height:"100%",objectFit:"cover"}}/>
+        ?<img src={c.photo_couverture_moyen||c.photo_couverture} alt="" className="fb-img" loading="lazy" decoding="async" style={{width:"100%",height:"100%",objectFit:"cover"}}/>
         :<div style={{width:"100%",height:"100%",display:"grid",placeItems:"center",color:"var(--muted)"}}><Icon name="camera" size={28}/></div>}
       <div style={{position:"absolute",top:12,left:12}}>
         <StatusPill kind={st.kind} size="sm">{st.label}</StatusPill>
@@ -548,7 +548,7 @@ export function ChantierDetail({ chantierId, go, onLogout, isAdmin, backTo, apiB
           </div>
           <div style={{position:"relative",background:"var(--noir)",padding:28,color:"#fff",
             display:"flex",flexDirection:"column",justifyContent:"flex-end",minHeight:240}}>
-            {c.photos[0]&&<img src={c.photos[0].url} alt="" className="fb-img"
+            {c.photos[0]&&<img src={c.photos[0].url_moyen||c.photos[0].url} alt="" className="fb-img"
               style={{position:"absolute",inset:0,width:"100%",height:"100%",objectFit:"cover",opacity:.35}}/>}
             <div style={{position:"absolute",inset:0,background:"linear-gradient(180deg,rgba(15,15,15,.3),rgba(15,15,15,.82))"}}/>
             <div style={{position:"relative"}}>
@@ -707,7 +707,7 @@ function Timeline({ etapes, photos=[] }) {
             {stepPhotos.map((p,pi)=><div key={p.id} onClick={()=>setLightbox({photos:stepPhotos,idx:pi})}
               style={{width:72,height:72,borderRadius:8,overflow:"hidden",border:"1.5px solid var(--line-strong)",
                 cursor:"pointer",flex:"0 0 auto",background:"var(--bg-soft)"}}>
-              <img src={p.url} alt={p.legende||""} className="fb-img"
+              <img src={p.url_moyen||p.url} alt={p.legende||""} className="fb-img" loading="lazy" decoding="async"
                 style={{width:"100%",height:"100%",objectFit:"cover"}}/>
             </div>)}
           </div>}
@@ -717,7 +717,7 @@ function Timeline({ etapes, photos=[] }) {
     {lightbox&&<div onClick={()=>setLightbox(null)} style={{position:"fixed",inset:0,zIndex:200,
       background:"rgba(10,10,10,.92)",display:"grid",placeItems:"center",padding:24}}>
       <div onClick={e=>e.stopPropagation()} style={{maxWidth:760,width:"100%",position:"relative"}}>
-        <img src={lightbox.photos[lightbox.idx].url} alt="" className="fb-img"
+        <img src={lightbox.photos[lightbox.idx].url_grand||lightbox.photos[lightbox.idx].url} alt="" className="fb-img"
           style={{width:"100%",maxHeight:"75vh",objectFit:"contain",borderRadius:10,background:"#000"}}/>
         {lightbox.photos[lightbox.idx].legende&&<div style={{textAlign:"center",marginTop:12,
           color:"rgba(255,255,255,.8)",fontSize:14}}>{lightbox.photos[lightbox.idx].legende}</div>}
@@ -754,9 +754,9 @@ function Gallery({ photos }) {
         <span style={{fontFamily:"var(--font-head)",fontWeight:700,fontSize:14.5}}>Avant / après</span>
       </div>
       <div style={{position:"relative",height:280,borderRadius:"var(--r-card)",overflow:"hidden",border:"1px solid var(--line)",userSelect:"none"}}>
-        <img src={avant.url} alt="avant" className="fb-img" style={{position:"absolute",inset:0,width:"100%",height:"100%",objectFit:"cover"}}/>
+        <img src={avant.url_moyen||avant.url} alt="avant" className="fb-img" style={{position:"absolute",inset:0,width:"100%",height:"100%",objectFit:"cover"}}/>
         <div style={{position:"absolute",inset:0,width:reveal+"%",overflow:"hidden"}}>
-          <img src={apres.url} alt="après" className="fb-img" style={{position:"absolute",inset:0,width:(10000/reveal)+"%",maxWidth:"none",height:"100%",objectFit:"cover"}}/>
+          <img src={apres.url_moyen||apres.url} alt="après" className="fb-img" style={{position:"absolute",inset:0,width:(10000/reveal)+"%",maxWidth:"none",height:"100%",objectFit:"cover"}}/>
         </div>
         <div style={{position:"absolute",top:0,bottom:0,left:reveal+"%",width:3,background:"var(--jaune)",transform:"translateX(-50%)"}}>
           <div style={{position:"absolute",top:"50%",left:"50%",transform:"translate(-50%,-50%)",
@@ -774,7 +774,7 @@ function Gallery({ photos }) {
       {photos.map((p,i)=><div key={p.id} onClick={()=>setOpen(i)}
         style={{cursor:"pointer",borderRadius:"var(--r-input)",overflow:"hidden",border:"1px solid var(--line)",background:"#fff"}}>
         <div style={{position:"relative",height:130,background:"var(--bg-soft)"}}>
-          <img src={p.url} alt="" className="fb-img" style={{width:"100%",height:"100%",objectFit:"cover"}}/>
+          <img src={p.url_moyen||p.url} alt="" className="fb-img" loading="lazy" decoding="async" style={{width:"100%",height:"100%",objectFit:"cover"}}/>
           <span style={{position:"absolute",top:8,left:8,background:"var(--jaune)",color:"#1a1a1a",
             fontSize:11,fontWeight:700,padding:"3px 8px",borderRadius:999,display:"flex",alignItems:"center",gap:4}}>
             <Icon name="bolt" size={11}/>FB ELEC</span>
@@ -793,7 +793,7 @@ function Gallery({ photos }) {
       background:"rgba(10,10,10,.9)",display:"grid",placeItems:"center",padding:24}}>
       <div onClick={e=>e.stopPropagation()} style={{maxWidth:760,width:"100%"}}>
         <div style={{position:"relative"}}>
-          <img src={photos[open].url} alt="" className="fb-img"
+          <img src={photos[open].url_grand||photos[open].url} alt="" className="fb-img"
             style={{width:"100%",maxHeight:"72vh",objectFit:"contain",borderRadius:10,background:"#000"}}/>
           <button onClick={()=>setOpen(null)} style={{position:"absolute",top:-14,right:-14,width:40,height:40,
             borderRadius:999,background:"#fff",border:"none",cursor:"pointer",display:"grid",placeItems:"center"}}>
@@ -1102,7 +1102,7 @@ function ClientPhotosSection({ chantierId, photos, reload, showToast, readonly=f
     {photos.length>0&&<div style={{display:"grid",gap:10}}>
       {photos.map((p,i)=><div key={p.id} style={{display:"flex",gap:12,alignItems:"center",
         padding:10,border:"1px solid var(--line)",borderRadius:"var(--r-input)",background:"#fff"}}>
-        <img src={p.url} alt="" className="fb-img" onClick={()=>setOpen(i)}
+        <img src={p.url_mini||p.url} alt="" className="fb-img" loading="lazy" decoding="async" onClick={()=>setOpen(i)}
           style={{width:56,height:56,borderRadius:8,objectFit:"cover",flex:"0 0 auto",cursor:"pointer"}}/>
         <div style={{flex:1,minWidth:0,fontSize:13,color:"var(--muted)"}}>
           {p.legende||p.etape_label||"Sans légende"}
@@ -1121,7 +1121,7 @@ function ClientPhotosSection({ chantierId, photos, reload, showToast, readonly=f
     </div>}
     {open!==null&&<div onClick={()=>setOpen(null)} style={{position:"fixed",inset:0,zIndex:400,
       background:"rgba(0,0,0,.88)",display:"grid",placeItems:"center",padding:20}}>
-      <img src={photos[open].url} alt="" className="fb-img"
+      <img src={photos[open].url_grand||photos[open].url} alt="" className="fb-img"
         style={{maxWidth:"90vw",maxHeight:"85vh",borderRadius:12,objectFit:"contain"}}/>
     </div>}
   </Card>;

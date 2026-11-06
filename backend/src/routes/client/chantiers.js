@@ -8,6 +8,7 @@ import { str, gps, libelleGps } from '../../utils/validate.js';
 import { sendContactClient, sendNouveauChantierAdmin, sendMessageCollegue } from '../../services/mailer.js';
 import { destinatairesAbonnes, membresAbonnes, lireClientIds, remplacerAbonnes, INT_MAX } from '../../services/abonnes.js';
 import { genererMandat, genererMandatFichier } from '../../services/mandat.js';
+import { avecFormats, couverture, genererFormats, supprimerFormats } from '../../services/formats.js';
 
 const router = Router();
 router.use(authClient);
@@ -93,7 +94,7 @@ router.get('/chantiers', async (req, res, next) => {
        ORDER BY c.updated_at DESC`,
       [ecriture, archived, req.clientId]
     );
-    res.json(rows.map(c => ({ ...c, photo_couverture: toPublicUrl(c.photo_couverture) })));
+    res.json(rows.map(c => ({ ...c, ...couverture(c.photo_couverture) })));
   } catch (err) { next(err); }
 });
 
@@ -152,7 +153,7 @@ router.get('/chantiers/:id', async (req, res, next) => {
     res.json({
       ...chantier,
       etapes,
-      photos: photos.map(p => ({ ...p, url: toPublicUrl(p.url) })),
+      photos: photos.map(avecFormats),
       documents: documents.map(d => ({ ...d, url: toPublicUrl(d.url) })),
       notes,
     });
@@ -381,13 +382,14 @@ router.post('/chantiers/:id/photos', exigeEcriture, uploadPhotos.single('photo')
     if (!c) return refusEcriture(req, res, chantierId);
 
     if (!req.file) return res.status(400).json({ error: 'Photo manquante.' });
+    await genererFormats(req.file.path); // original conservé + formats mini / moyen / grand
 
     const { rows: [photo] } = await pool.query(
       'INSERT INTO fbelec.photos (chantier_id, url, visible_client) VALUES ($1,$2,TRUE) RETURNING *',
       [chantierId, req.file.path]
     );
-    res.status(201).json({ ...photo, url: toPublicUrl(photo.url) });
-  } catch (err) { if (req.file) fs.unlink(req.file.path, () => {}); next(err); }
+    res.status(201).json(avecFormats(photo));
+  } catch (err) { if (req.file) { fs.unlink(req.file.path, () => {}); supprimerFormats(req.file.path); } next(err); }
 });
 
 // DELETE /api/client/chantiers/:id/documents/:docId
@@ -428,6 +430,7 @@ router.delete('/chantiers/:id/photos/:photoId', async (req, res, next) => {
     if (!photo) return res.status(404).json({ error: 'Photo introuvable.' });
 
     if (photo.url && fs.existsSync(photo.url)) { try { fs.unlinkSync(photo.url); } catch {} }
+    supprimerFormats(photo.url);
     res.json({ ok: true });
   } catch (err) { next(err); }
 });

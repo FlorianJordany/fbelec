@@ -733,7 +733,8 @@ export function AdminList({ go, openChantier, onLogout, isAdmin }) {
       <span>
         <div style={{display:"flex",alignItems:"center",gap:10}}>
           {c.photo_couverture
-            ?<img src={c.photo_couverture} alt="" className="fb-img"
+            ?<img src={c.photo_couverture_mini||c.photo_couverture} alt="" className="fb-img"
+                width={40} height={40} loading="lazy" decoding="async"
                 style={{width:40,height:40,borderRadius:8,objectFit:"cover",flex:"0 0 auto"}}/>
             :<div style={{width:40,height:40,borderRadius:8,background:"var(--bg-soft)",
                 display:"grid",placeItems:"center",flex:"0 0 auto"}}>
@@ -1145,7 +1146,7 @@ export function AdminChantier({ chantierId, go, onLogout, isAdmin }) {
           <div style={{display:"grid",gap:12}}>
             {c.photos.map(p=><div key={p.id} style={{display:"flex",gap:13,alignItems:"center",
               padding:11,border:"1px solid var(--line)",borderRadius:"var(--r-input)",background:"#fff"}}>
-              <img src={p.url} alt="" className="fb-img"
+              <img src={p.url_mini||p.url} alt="" className="fb-img" loading="lazy" decoding="async"
                 style={{width:64,height:64,borderRadius:8,objectFit:"cover",flex:"0 0 auto"}}/>
               <div style={{flex:1,minWidth:0}}>
                 <div style={{fontSize:13,color:"var(--ink)",fontWeight:600,marginBottom:4}}>{p.legende||p.nom_fichier||"Sans légende"}</div>
@@ -1844,7 +1845,7 @@ function ChantierCardVue({ c, onOpen }) {
   return <Card pad={0} hover onClick={onOpen} style={{overflow:"hidden",display:"flex",flexDirection:"column"}}>
     <div style={{position:"relative",height:140,background:"var(--bg-soft)",overflow:"hidden"}}>
       {c.photo_couverture
-        ?<img src={c.photo_couverture} alt="" className="fb-img" style={{width:"100%",height:"100%",objectFit:"cover"}}/>
+        ?<img src={c.photo_couverture_moyen||c.photo_couverture} alt="" className="fb-img" loading="lazy" decoding="async" style={{width:"100%",height:"100%",objectFit:"cover"}}/>
         :<div style={{width:"100%",height:"100%",display:"grid",placeItems:"center",color:"var(--muted)"}}><Icon name="camera" size={26}/></div>}
       <div style={{position:"absolute",top:10,left:10}}>
         <StatusPill kind={st.kind} size="sm">{st.label}</StatusPill>

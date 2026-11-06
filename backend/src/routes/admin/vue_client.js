@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { pool } from '../../db.js';
 import { toPublicUrl } from '../../middleware/upload.js';
+import { avecFormats, couverture } from '../../services/formats.js';
 
 const router = Router();
 
@@ -30,7 +31,7 @@ router.get('/chantiers', async (req, res, next) => {
        WHERE c.actif = TRUE
        ORDER BY c.updated_at DESC`
     );
-    res.json(rows.map(r => ({ ...r, photo_couverture: toPublicUrl(r.photo_couverture) })));
+    res.json(rows.map(r => ({ ...r, ...couverture(r.photo_couverture) })));
   } catch (err) { next(err); }
 });
 
@@ -79,7 +80,7 @@ router.get('/chantiers/:id', async (req, res, next) => {
     res.json({
       ...chantier,
       etapes,
-      photos: photos.map(p => ({ ...p, url: toPublicUrl(p.url) })),
+      photos: photos.map(avecFormats),
       documents: documents.map(d => ({ ...d, url: toPublicUrl(d.url) })),
       notes,
     });

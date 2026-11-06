@@ -5,6 +5,7 @@ import fs from 'fs';
 import { pool } from '../../db.js';
 import { str, email as vEmail } from '../../utils/validate.js';
 import { sendWelcomeClient, sendCodeReset, sendEmailModifie } from '../../services/mailer.js';
+import { supprimerFormats } from '../../services/formats.js';
 
 const router = Router();
 
@@ -168,6 +169,7 @@ router.delete('/:id', async (req, res, next) => {
     for (const { url } of [...photos, ...documents]) {
       if (url && fs.existsSync(url)) { try { fs.unlinkSync(url); } catch {} }
     }
+    photos.forEach(({ url }) => supprimerFormats(url));
 
     res.json({ ok: true });
   } catch (err) { await client.query('ROLLBACK'); next(err); }

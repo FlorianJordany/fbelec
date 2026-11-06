@@ -258,6 +258,30 @@ open redirect (navigation interne, `?chantier=` casté en entier), secrets front
   `frontend/src/admin.jsx`, `frontend/src/client.jsx`. `node --check` OK ; build OK ; formulaire
   client vérifié en preview (2 champs Référence, bascule facturation, 0 erreur).
 
+## 23. Formats d'affichage des photos (2026-11-06)
+
+- **Besoin** : les pages chargeaient la photo complète, jusqu'à plusieurs Mo pour une photo client, même
+  dans une vignette de 40 px. Lent, et pixelisé une fois réduit par le navigateur.
+- **Solution** (`backend/src/services/formats.js`, sharp déjà en dépendance) :
+  - à l'envoi (routes admin et client), l'original est conservé tel quel et trois JPEG sont enregistrés
+    sur le disque : `mini` (128×128 recadré), `moyen` (800 px max) et `grand` (1600 px max), dans
+    `<dossier photos>/<format>/` ;
+  - l'API renvoie `url` (original), `url_mini`, `url_moyen` et `url_grand`, et pour les listes
+    `photo_couverture_mini` et `photo_couverture_moyen` ;
+  - les pages chargent le format adapté : vignettes → mini ; cartes, grilles, avant/après → moyen ;
+    visionneuse → grand ; téléchargement → original.
+  - **Changement de comportement** : les photos envoyées par FB ELEC ne sont plus remplacées par leur
+    version 1600 px. L'original est gardé, donc le disque utilisé augmente.
+- **Photos déjà en ligne** : au démarrage de l'API (`app.js`), `rattraperFormats()` crée en arrière-plan
+  les formats manquants, une photo à la fois. Il ne parcourt que les dossiers `*/chantiers/*/photos/`.
+- **Sécurité** :
+  - les chemins des formats sont dérivés du chemin en base, jamais d'une entrée utilisateur ;
+  - les URLs passent par `toPublicUrl` (refus de toute sortie du dossier uploads) ;
+  - écriture dans un fichier `.tmp` puis renommage ;
+  - une image illisible (HEIC, fichier corrompu) n'est pas retentée et les pages affichent l'original ;
+  - les formats sont effacés avec la photo, dans les 4 cas de suppression (photo admin, photo client,
+    chantier, client) et si l'enregistrement d'une photo client échoue.
+
 ## 22. Espace « Mon compte » : mot de passe et informations personnelles (2026-11-02)
 
 - **Routes** : `GET/PUT /api/client/compte` et `/api/admin/compte`, `PUT .../mot-de-passe`

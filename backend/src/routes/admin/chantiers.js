@@ -5,6 +5,7 @@ import { toPublicUrl } from '../../middleware/upload.js';
 import { sendEtapeAvancement } from '../../services/mailer.js';
 import { destinatairesAbonnes, membresAbonnes, lireClientIds, remplacerAbonnes, INT_MAX } from '../../services/abonnes.js';
 import { genererMandat, genererMandatFichier } from '../../services/mandat.js';
+import { avecFormats, couverture, supprimerFormats } from '../../services/formats.js';
 import { str, gps, libelleGps } from '../../utils/validate.js';
 
 const router = Router();
@@ -49,7 +50,7 @@ router.get('/', async (req, res, next) => {
        ORDER BY c.updated_at DESC`,
       [archived]
     );
-    res.json(rows.map(r => ({ ...r, photo_couverture: toPublicUrl(r.photo_couverture) })));
+    res.json(rows.map(r => ({ ...r, ...couverture(r.photo_couverture) })));
   } catch (err) { next(err); }
 });
 
@@ -91,7 +92,7 @@ router.get('/:id', async (req, res, next) => {
       'SELECT * FROM fbelec.notes WHERE chantier_id = $1 ORDER BY created_at DESC', [req.params.id]
     );
 
-    const photosWithUrl = photos.map(p => ({ ...p, url: toPublicUrl(p.url) }));
+    const photosWithUrl = photos.map(avecFormats);
     const docsWithUrl = documents.map(d => ({ ...d, url: toPublicUrl(d.url) }));
     res.json({ ...chantier, etapes, photos: photosWithUrl, documents: docsWithUrl, notes });
   } catch (err) { next(err); }
@@ -360,6 +361,7 @@ router.delete('/:id', async (req, res, next) => {
         try { fs.unlinkSync(url); } catch {}
       }
     }
+    photos.forEach(({ url }) => supprimerFormats(url));
 
     res.json({ ok: true });
   } catch (err) { await client.query('ROLLBACK'); next(err); }
