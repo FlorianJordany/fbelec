@@ -36,10 +36,22 @@ export function libelleGps({ lat, lng }) {
   return `Point GPS ${lat.toFixed(5)}, ${lng.toFixed(5)}`;
 }
 
-// E-mail : format basique + longueur bornée.
+// Règle unique des mots de passe choisis par l'utilisateur (1re connexion, « Mon compte »).
+// trim : la connexion retire aussi les espaces (claviers mobiles). 72 octets : limite de bcrypt,
+// au-delà le reste du mot de passe serait ignoré sans prévenir.
+const MDP_MIN = 6;
+export function motDePasse(value) {
+  const v = typeof value === 'string' ? value.trim() : '';
+  if (v.length < MDP_MIN) bad(`Le mot de passe doit faire au moins ${MDP_MIN} caractères.`);
+  if (Buffer.byteLength(v) > 72) bad('Le mot de passe est trop long (72 caractères maximum).');
+  return v;
+}
+
+// E-mail : format basique + longueur bornée. Pas de séparateur ni de chevron : nodemailer lirait
+// plusieurs destinataires dans « a@b.fr,c@d.fr ». Pas d'URL déguisée en adresse non plus.
 export function email(value, { required = true } = {}) {
   const v = str(value, { required, max: 254, label: 'E-mail' });
   if (v === null) return null;
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v)) bad('E-mail invalide.');
+  if (!/^[^\s@/:<>,;"()\\\[\]]+@[^\s@/:<>,;"()\\\[\]]+\.[^\s@/:<>,;"()\\\[\]]+$/.test(v)) bad('E-mail invalide.');
   return v.toLowerCase();
 }

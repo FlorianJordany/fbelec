@@ -30,7 +30,7 @@ export async function sendWelcomeClient({ nom, email, code }) {
           <h1 style="margin:0;color:#F5C518;font-size:22px;letter-spacing:.05em">FB ELEC</h1>
         </div>
         <div style="padding:32px;border:1px solid #e9ebee;border-top:none">
-          <h2 style="margin:0 0 16px;font-size:20px;color:#20242a">Bonjour ${nom},</h2>
+          <h2 style="margin:0 0 16px;font-size:20px;color:#20242a">Bonjour ${esc(nom)},</h2>
           <p style="color:#5c656f;line-height:1.6;margin:0 0 24px">
             FB ELEC a créé votre espace de suivi de chantier.<br>
             Voici vos identifiants de connexion :
@@ -350,7 +350,7 @@ export async function sendCodeReset({ nom, email, code }) {
           <h1 style="margin:0;color:#F5C518;font-size:22px;letter-spacing:.05em">FB ELEC</h1>
         </div>
         <div style="padding:32px;border:1px solid #e9ebee;border-top:none">
-          <h2 style="margin:0 0 16px;font-size:20px;color:#20242a">Bonjour ${nom},</h2>
+          <h2 style="margin:0 0 16px;font-size:20px;color:#20242a">Bonjour ${esc(nom)},</h2>
           <p style="color:#5c656f;line-height:1.6;margin:0 0 24px">
             Un nouveau mot de passe provisoire a été généré pour votre compte.
           </p>
@@ -366,6 +366,77 @@ export async function sendCodeReset({ nom, email, code }) {
             border-radius:10px;text-decoration:none;font-weight:700;font-size:15px">
             Se connecter →
           </a>
+        </div>
+      </div>
+    `,
+  });
+}
+
+export async function sendMotDePasseOublie({ nom, email, code, heures }) {
+  if (!process.env.SMTP_HOST) {
+    console.warn('[mailer] SMTP non configuré — email non envoyé à', email);
+    return;
+  }
+  await transporter.sendMail({
+    from: `"FB ELEC" <${process.env.SMTP_FROM || process.env.SMTP_USER}>`,
+    to: email,
+    subject: 'Votre mot de passe temporaire FB ELEC',
+    html: `
+      <div style="font-family:Arial,sans-serif;max-width:560px;margin:0 auto">
+        <div style="background:#1a1a1a;padding:28px 32px">
+          <h1 style="margin:0;color:#F5C518;font-size:22px;letter-spacing:.05em">FB ELEC</h1>
+        </div>
+        <div style="padding:32px;border:1px solid #e9ebee;border-top:none">
+          <h2 style="margin:0 0 16px;font-size:20px;color:#20242a">Bonjour ${esc(nom)},</h2>
+          <p style="color:#5c656f;line-height:1.6;margin:0 0 24px">
+            Une demande de mot de passe oublié a été faite pour votre compte. Voici un mot de passe temporaire, valable ${heures} heures.
+          </p>
+          <div style="background:#f5f6f8;border-radius:10px;padding:20px 24px;margin-bottom:24px">
+            <div style="font-size:12px;color:#98a0a9;text-transform:uppercase;letter-spacing:.06em;font-weight:700;margin-bottom:4px">Mot de passe temporaire</div>
+            <div style="font-size:22px;color:#20242a;font-weight:700;font-family:monospace;letter-spacing:.1em">${code}</div>
+          </div>
+          <p style="color:#5c656f;font-size:14px;line-height:1.6;margin:0 0 12px">
+            Connectez-vous avec ce mot de passe pour en choisir un nouveau. Votre mot de passe actuel reste valable jusqu'à ce que vous utilisiez le mot de passe temporaire. Seul le dernier mot de passe temporaire reçu est valable : toute nouvelle demande annule les précédents.
+          </p>
+          <p style="color:#5c656f;font-size:14px;line-height:1.6;margin:0 0 24px">
+            Si vous n'êtes pas à l'origine de cette demande, ignorez ce message : rien ne change sur votre compte.
+          </p>
+          <a href="${process.env.PUBLIC_URL || ''}"
+            style="display:inline-block;background:#F5C518;color:#1a1a1a;padding:13px 26px;
+            border-radius:10px;text-decoration:none;font-weight:700;font-size:15px">
+            Se connecter →
+          </a>
+        </div>
+      </div>
+    `,
+  });
+}
+
+// Alerte envoyée à l'ANCIENNE adresse quand l'e-mail d'un compte change (client ou FB ELEC). Ni nom
+// ni nouvelle adresse : tous deux sont saisis par le compte, et ce mail peut viser la boîte d'un tiers.
+export async function sendEmailModifie({ ancienEmail }) {
+  if (!process.env.SMTP_HOST) {
+    console.warn('[mailer] SMTP non configuré — email non envoyé à', ancienEmail);
+    return;
+  }
+  const from = process.env.SMTP_FROM || process.env.SMTP_USER;
+  await transporter.sendMail({
+    from: `"FB ELEC" <${from}>`,
+    to: ancienEmail,
+    subject: 'Votre adresse e-mail FB ELEC a été modifiée',
+    html: `
+      <div style="font-family:Arial,sans-serif;max-width:560px;margin:0 auto">
+        <div style="background:#1a1a1a;padding:28px 32px">
+          <h1 style="margin:0;color:#F5C518;font-size:22px;letter-spacing:.05em">FB ELEC</h1>
+        </div>
+        <div style="padding:32px;border:1px solid #e9ebee;border-top:none">
+          <h2 style="margin:0 0 16px;font-size:20px;color:#20242a">Bonjour,</h2>
+          <p style="color:#5c656f;line-height:1.6;margin:0 0 24px">
+            L'adresse e-mail de votre compte FB ELEC vient d'être modifiée. Cette adresse-ci ne sert plus à vous connecter.
+          </p>
+          <p style="color:#5c656f;font-size:14px;line-height:1.6;margin:0">
+            Si vous n'êtes pas à l'origine de ce changement, contactez FB ELEC sans attendre : ${esc(process.env.CONTACT_EMAIL || from)}
+          </p>
         </div>
       </div>
     `,

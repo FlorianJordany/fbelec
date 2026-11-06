@@ -10,110 +10,146 @@
 
 ## 🔄 Dernière session
 
-- **Date :** 2026-07-30 (sessions du 21 au 30 juillet)
+- **Date :** 2026-11-02
 - **Développeur :** Florian
 
 ### Ce qui a été fait
 
-- **Mandat EDF PDF prérempli** : service `backend/src/services/mandat.js` (pdf-lib, dessin par
-  coordonnées sur `backend/assets/mandat-vierge.pdf`). Contenu final : mandant = référence
-  client ; « autorise **Société F.B ELEC ( Monsieur Franck BORDIER )** » ; RGPD tout coché ;
-  souscription/résiliation = **seule la case « branchement provisoire »** cochée ; adresse du
-  chantier ; fait à + date du jour + 1 exemplaire ; **signature (tampon détouré) côté
-  mandataire** (x:337). **Généré automatiquement à la création** et rangé dans les documents du
-  chantier **sauf si un mandat est uploadé** (`mandat_fourni`) ; bouton de téléchargement au
-  récapitulatif (masqué si mandat fourni).
-- **Contact facturation** (migration `2026-07-21_facturation_contact.sql`) : si facturation
-  « différente », référence préremplie (modifiable) + champs Téléphone/Mail facultatifs.
-  Mandat retiré des documents obligatoires ; **documents obligatoires réellement bloquants**
-  côté admin aussi (gate `canStep3`).
-- **Fil de messages client ↔ FB ELEC** (migration `2026-07-22_commentaire_notes_client.sql`) :
-  `POST /api/client/contact` accepte `chantier_id` (anti-IDOR via `allowedClientIds`) → message
-  stocké dans `fbelec.notes` (`de_client=TRUE`, auteur = nom serveur). Fil affiché des deux
-  côtés avec le **composant `Notes` partagé** (exporté de `client.jsx`, importé par `admin.jsx` ;
-  avatars : initiales grises = client, « FB » jaune = FB ELEC). L'admin répond via la carte
-  « Message au client » existante. E-mail enrichi (société, tél, chantier, références) +
-  bouton « Voir et répondre sur le site » → `PUBLIC_URL?chantier=<id>`.
-- **Commentaire de création** : textarea facultatif à l'étape 2 Documents (client + admin),
-  colonne `chantiers.commentaire`, affiché au récap et dans « Informations du dossier ».
-- **Référence client en avant côté client** : cartes « Mes chantiers » et gros titre de la
-  fiche = `reference_client`, **repli sur l'adresse si absente** (adresse toujours en
-  sous-ligne). Idem « Vue côté client » admin (+ `de_client` ajouté à son détail).
-- **Fix « Référence déjà utilisée » (409)** : la création insérait une référence provisoire
-  fixe `'TMP'` (unique en base) → remplacée par `'TMP-'||md5(random()::text)` (admin + client),
-  validations sorties de la transaction, log de la contrainte réelle en cas de 23505.
-  Cause déclenchante sur DEV : **base importée de prod sans resync des séquences** → tous les
-  `setval` passés le 2026-07-30.
-- **Correctifs** : login admin tolère les espaces du clavier mobile (trim) ; largeur en-tête
-  fiche (`.fb-wrap{width:100%}`) ; libellé mandat court « Généré automatiquement si absent ».
-- **Écran de connexion : vraie cause affichée** (fin de journée) : « Identifiants incorrects »
-  masquait TOUTE erreur (c'est ce qui a fait croire à un mauvais mot de passe alors qu'un
-  wifi d'hôtel bloquait l'API). Désormais : serveur injoignable/portail captif → message
-  réseau ; 429 anti-bruteforce → « Trop de tentatives… » ; 401 → « Identifiants incorrects ».
-  (`client.jsx` / `tryLogin`, 4 cas vérifiés en preview, **déployé en prod**).
-- **Référence client dans les e-mails de notification** (fin de journée) : objet + corps de
-  `sendEtapeAvancement` et `sendNouvelleNote` incluent `reference_client` (rien si vide).
-  Fichiers : `mailer.js`, `routes/admin/chantiers.js`, `routes/admin/notes.js`.
-- **Git/GitHub** : repo `FlorianJordany/fbelec`, branches `main` + `DEV`. PR #1 mergée ;
-  **PR #2 ouverte** (contient les commits `806cbac` + `980d5ca` = tout le travail ci-dessus).
-- **Déploiement : PROD et DEV à jour et validés au 2026-07-30** (base, backend complet avec
-  pdf-lib + assets, front). Incident prod du 30/07 (`/health` 503 = connexion DB) résolu.
+- **Carte Google + cadastre IGN**, selon la spec de Tony : `frontend/src/MapGoogle.jsx`,
+  `frontend/src/carte.js`, `MapPicker.jsx`, `CarteGps` (`ui.jsx`). Repli automatique sur la carte
+  IGN/Leaflet si Google échoue. Clés dans `frontend/.env` (DEV) et `frontend/.env.production`
+  (PROD), ignorés par git. Détail : `SECURITY_AUDIT.md` §21.
+- **Espace « Mon compte »** (clients et FB ELEC) : `backend/src/routes/compte.js`, vue `MonCompte`
+  dans `client.jsx`, bouton dans `AppHeader`. Nom, e-mail, téléphone, mot de passe. Le mot de passe
+  actuel est exigé pour changer d'e-mail ou de mot de passe. Disposition PC : deux cartes alignées
+  sur l'en-tête, une colonne sous 640 px.
+- **Coupure des sessions** : colonne `mdp_version`, claim `mv` dans le jeton
+  (`middleware/session.js`, `authClient`, `authAdmin`). `change-code` réservé au claim `provisoire`.
+- **Mot de passe oublié refait** : temporaire rangé à part (`code_provisoire_hash`,
+  `code_provisoire_expire`), valable 24 h. Le mot de passe actuel reste valable jusqu'à la première
+  utilisation du temporaire. Réponse à Florian : oui à cette protection.
+- **Alerte à l'ancienne adresse** à chaque changement d'e-mail (`sendEmailModifie`), sans nom ni
+  nouvelle adresse. Réponse à Florian : oui à l'alerte.
+- **Corrections de la 2e revue** (28 constats confirmés, 24 corrigés) :
+  - Plafonds par compte, en base : 1 demande d'oubli par 5 min et 6 par 24 h ; 3 changements
+    d'e-mail par client sur 24 h (429 au-delà, FB ELEC peut toujours corriger).
+  - Limiteurs d'oubli et de contact testés depuis le montage du routeur (`skip`) : ferme le
+    contournement par double barre (`/api/auth//forgot-password`, `/api/client//contact`).
+  - Délais égalisés (`HASH_FACTICE`) : un compte inexistant ne se distingue plus au chronomètre.
+  - Le front essaie la connexion client avant FB ELEC.
+  - Mail d'oubli en échec : le temporaire est annulé. E-mail changé pendant une demande : aucun code.
+  - `vEmail` refuse `/ : < > , ; " ( ) \ [ ]`. Codes générés sans `!@#`.
+  - FB ELEC corrige l'e-mail d'un compte au mot de passe provisoire non remplacé : nouveau code
+    envoyé à la bonne adresse, ancien code annulé, sessions coupées.
+  - Toast lisible sur mobile, en-tête FB ELEC réparé entre 641 et 720 px (`.fb-hide-entete`),
+    formulaire d'oubli (Retour, envoi vide, textes).
+- **`SECURITY_AUDIT.md` §22** à jour.
+- **Tests** : 199/199 de bout en bout (PGlite, vrai Express, vraies requêtes HTTP), attaques rejouées
+  et bloquées, écrans vérifiés en preview. Scripts hors repo (scratchpad de la session de Florian).
+  **Pas testé sur le vrai PostgreSQL 9.6 ni avec un vrai SMTP.**
+- **Builds prêts** : `frontend/dist/dev` et `frontend/dist/prod`, contrôlés (bonne API, bonne clé
+  Google dans chacun, pas de `localhost`).
 
 ### En cours / pas terminé
 
-- **2 retouches non commitées** (login messages d'erreur + référence dans les e-mails) :
-  à committer sur `DEV` (elles rejoindront la PR #2). Le déploiement backend des e-mails
-  (3 fichiers + restart, DEV et PROD — commandes données en fin de conversation) restait
-  **à confirmer** ; la retouche login est en prod mais **pas encore redéployée sur DEV**
-  (le `dist/` local est un build **prod**).
-- **PR #2 à merger** vers `main` sur GitHub (tout est déjà déployé et validé).
-- **SMTP toujours non configuré** (prod ET dev) → aucun e-mail ne part (le fil de messages
-  fonctionne quand même : stockage en base). Variables cPanel : `SMTP_HOST/PORT/SECURE/USER/
-  PASS/FROM` + `CONTACT_EMAIL`, puis restart.
-- **AutoSSL DEV impossible** : la zone `universe.wf` répond SERVFAIL aux requêtes CAA
-  (côté o2switch). Voie A = ticket o2switch ; voie B = sous-domaines dev sous `fbelec.fr`
-  (OVH A → 109.234.166.144 + Create Domain + AutoSSL + refaire `.env`/CORS/build).
-- `apercu-guide.html` (racine) toujours à supprimer.
+- **Déploiement du dernier lot : lignes données à Florian, exécution non confirmée au moment de
+  cette passation.** La 1re version de Mon compte est en DEV (capture de Florian), carte incluse dans
+  ce build. Pour la PROD, ni la carte, ni Mon compte, ni le nouvel oubli ne sont confirmés.
+  - DEV : migration `2026-11-02_mdp_oublie.sql`, puis `backend/src`, puis `dist/dev`.
+  - PROD : vérification des e-mails en double, `2026-11-02_mon_compte.sql`,
+    `2026-11-02_mdp_oublie.sql`, puis `backend/src`, puis `dist/prod`.
+- **Rien n'est commité depuis `f681750`** : 25 fichiers modifiés ou nouveaux sur la branche `DEV`
+  (carte, Mon compte, oubli, audit, ce fichier). Florian n'a pas encore répondu pour le push.
+- **Questions ouvertes pour Florian** :
+  - Garder « Compte FB ELEC : contactez votre administrateur » sur l'écran d'oubli, ou donner un
+    contact précis ?
+  - Corriger ou non les 4 problèmes antérieurs (voir Pièges) ?
+- **Facturation Google** : dernier test en erreur `BillingNotEnabledMapError`, alors que la
+  passation de Tony indiquait la facturation associée. À vérifier dans Google Cloud. En attendant,
+  la carte reste sur IGN, repli vérifié.
 
 ### Prochaines étapes
 
-1. Merger la PR #2.
-2. Configurer le SMTP puis tester en réel : message client → e-mail enrichi + bouton
-   « Voir et répondre » ; avancement d'étape → e-mail client.
-3. HTTPS sur l'environnement DEV (voie A ou B ci-dessus).
-4. Sécurité en attente : rotation mot de passe DB + `JWT_SECRET`, suppression
-  `apercu-guide.html`, dette URL logo codée en dur (`ui.jsx`/`client.jsx`).
+1. Confirmer avec Florian où en est la DEV. Tester : Mon compte sur PC, « Demande enregistrée » à
+   l'oubli, 4e changement d'e-mail refusé sur un client de test.
+2. Déployer en PROD (migrations avant le backend), puis tester le mot de passe oublié avec un vrai
+   mail : il n'a jamais été testé avec un vrai SMTP.
+3. Commiter et pousser sur `DEV` si Florian le valide, puis merger la **PR #2** vers `main`.
+4. Résoudre la facturation Google, puis retester la vraie carte (DEV et PROD, mobile et desktop).
+5. Regarder un vrai mail de prod : si l'expéditeur affiche « FB ELEC> », corriger `mailer.js`.
+6. Tester en PROD les notifications par chantier (créateur Basic coche un collègue → lecture seule
+   + e-mails), repris de la passation de Tony.
+7. (Optionnel) SMTP sur le DEV. Vitrine : AutoSSL de l'API dev + protection par mot de passe du site DEV.
+8. Sécurité en attente : rotation mot de passe DB + `JWT_SECRET` ; supprimer `apercu-guide.html` ;
+   vérifier le dossier local orphelin `backend/uploads/fbelec/chantiers/999/`.
 
 ### Pièges / décisions / à savoir
 
-- **Deux builds front distincts** : prod = `npm run build` (`.env.production` →
-  `//api-suividechantier.fbelec.fr`) ; DEV = `npx vite build --mode development` (`.env` →
-  `//fbelec-api.sc1qize9193.universe.wf`). `dist/` ne contient qu'un seul build à la fois
-  (actuellement **prod**) — vérifier avec `grep sc1qize9193 dist/assets/*.js` avant un scp prod.
-- **`backend/assets/` est gitignoré** (mandat vierge + signature scannée) → à **scp
-  manuellement** vers chaque serveur, comme le `.env`.
-- **Base DEV importée de prod** : après toute réimportation, **repasser les `setval`** de
-  toutes les séquences, sinon 409/23505 trompeurs (« Référence déjà utilisée » couvre tout
-  doublon, y compris la pkey ; le log `[chantiers] doublon 23505:` dans `stderr.log` donne la
-  contrainte réelle).
-- **Fil de messages** : toute nouvelle SELECT de notes doit inclure `de_client` (3 endroits
-  faits : client, admin, vue-client). Le composant `Notes` est partagé — le modifier change
-  les deux côtés.
-- **Anti-IDOR** : toute nouvelle route client passe par `allowedClientIds()` (jamais
-  `client_id = req.clientId` en dur).
-- **Vérif front sans API** : mocker `window.fetch` en preview avec des données réalistes ;
-  pour naviguer le SPA malgré le reload au login, passer par le parcours `must_change_code`
-  (pas de reload) ou réutiliser le token localStorage existant.
-- **Pièges o2switch/Drive inchangés** : `chmod 755/644` après chaque scp (sinon 403/page
-  blanche) ; supprimer les `desktop.ini` avant chaque build ; npm install sur H: tronque des
-  fichiers → installer sur C: puis copier ; venv Node :
-  `source ~/nodevenv/<dossier-api>/22/bin/activate`.
+- **Migrations AVANT le backend**, sinon 500 sur toutes les routes authentifiées (`mdp_version`) et
+  sur l'oubli. `2026-11-02_mdp_oublie.sql` ajoute 6 colonnes à `fbelec.clients`. Toutes deux sont
+  idempotentes.
+- **Builds séparés**, plus de `dist/` unique. Depuis `frontend/` :
+  `npx vite build --mode production --outDir dist/prod --emptyOutDir` et
+  `npx vite build --mode development --outDir dist/dev --emptyOutDir`. Le contrôle avant scp PROD
+  devient `grep sc1qize9193 dist/prod/assets/*.js`.
+- **`desktop.ini` fantômes** dans `frontend/public` : invisibles depuis Git Bash, ils font échouer
+  Vite (ENOENT) et vident le dossier de sortie. Suppression en PowerShell :
+  `Get-ChildItem -Force -Recurse frontend\public -Filter desktop.ini | ForEach-Object { Remove-Item -LiteralPath $_.FullName -Force -Confirm:$false }`.
+  Git affiche aussi `ignoring broken ref refs/.../desktop.ini` : sans effet.
+- **Mauvais mot de passe actuel = 403, jamais 401** : `apiFetch` supprime le jeton et recharge sur 401.
+- **Ne pas remonter les limiteurs sur le chemin complet** (`app.use('/api/auth/forgot-password', …)`) :
+  c'est ce qui permettait la double barre.
+- **Connexion** : un mauvais mot de passe coûte 2 échecs (client puis FB ELEC), donc blocage de l'IP
+  après 5 essais, jusqu'à 15 minutes. Limiteurs par IP en mémoire, remis à zéro au redémarrage ; les
+  plafonds par compte sont en base.
+- **Alerte sans nom ni nouvelle adresse : voulu.** Ces valeurs sont saisies par le compte et le mail
+  peut viser la boîte d'un tiers.
+- **Comptes FB ELEC** : pas de récupération autonome, l'oubli ne concerne que les clients (SQL seulement).
+- **Limites acceptées** : le provisoire peut rester en place si l'utilisateur recharge la page
+  (décision de Florian : ne pas forcer) ; le nouvel e-mail n'est pas confirmé par un lien.
+- **4 problèmes antérieurs laissés de côté, à la décision de Florian** :
+  - Expéditeur « FB ELEC> » si `SMTP_FROM` a la forme `Nom <adresse>` donnée dans les guides.
+  - Toast « Nouveau mot de passe envoyé » affiché même si le mail échoue (`admin.jsx`).
+  - Guide client : 3 documents obligatoires annoncés au lieu de 2 (`client.jsx`).
+  - Petites cibles tactiles sur l'écran de connexion à 375 px.
+- **SMTP** : configuré en PROD ; sans SMTP en DEV, aucun mail ne part et aucune erreur n'apparaît.
+- **Clés Google** : ne jamais les afficher ni les commiter. Un nouveau domaine front doit être ajouté
+  aux référents de la clé (sinon `RefererNotAllowedMapError`). Ne pas activer d'autres API Google : la
+  recherche d'adresse reste sur la BAN.
+- **Rappels toujours valables** : domaine front PROD = `https://suividechantier.fbelec.fr`, sans `www`
+  (`docs/GUIDE-PROD.md` cite `suivi.fbelec.fr`, obsolète) ; accès client via le fragment SQL `VISIBLE`
+  (`routes/client/chantiers.js`) ; logique des abonnés dans `backend/src/services/abonnes.js` ;
+  `NotificationsChantier` partagé client/admin ; racine Passenger = docroot (`.htaccess`
+  `Require all denied` sur tout dossier sensible) ; commande de migration
+  `psql "$(grep '^DATABASE_URL' ~/<dossier-api>/.env | cut -d= -f2- | tr -d "'\"")" -f ~/fichier.sql` ;
+  Florian préfère des commandes complètes sans variables.
 
 ---
 
 ## 🗄️ Historique des sessions précédentes
 
 <!-- /passation descend ici l'ancienne entrée à chaque nouvelle passation. -->
+
+- **2026-10-24 — Tony (Google Cloud, spec de la carte)** : décision carte Google + cadastre IGN (modèle
+  du formulaire Enedis) ; facturation, budget et alertes ; Maps JavaScript API seule ; clés
+  « FBELEC carte DEV » et « FBELEC carte PROD » restreintes par référents, transmises à Florian hors
+  Drive ; environ 10 000 chargements par mois gratuits ; Tony a un accès admin au projet Google Cloud.
+  Aucun code modifié.
+
+- **2026-10-19 — Florian (GPS, badge Nouveau, notifications par chantier, sécurité)** : point
+  GPS à la création (`gps_lat/gps_lng`, `MapPicker.jsx` Leaflet + IGN/OSM/cadastre) ; badge
+  « Nouveau » (`chantiers.vu_admin`) ; notifications par chantier (`fbelec.chantier_abonnes`,
+  rôles société Admin/Basic uniquement, abonnés en lecture seule + e-mails) ; durcissements
+  (`.htaccess` deny sur `backend/src` et `backend/assets`, compte désactivé refusé, `esc()` dans
+  les e-mails, contrôle avant multer) ; diagnostic blocage réseau d'un client ; revue + tests
+  PGlite 40/40. DEV et PROD déployés ; commits dans la PR #2 (non mergée).
+
+- **2026-07-30 — Florian (mandat, facturation, fil de messages)** : mandat EDF PDF prérempli et
+  généré à la création (`services/mandat.js`, pdf-lib) ; contact facturation ; documents
+  obligatoires bloquants ; fil de messages client ↔ FB ELEC (`notes.de_client`, composant `Notes`
+  partagé) ; commentaire de création ; référence client en titre côté client ; fix 409
+  « Référence déjà utilisée » (`'TMP-'||md5`, setval DEV) ; vraie cause d'erreur au login ;
+  référence client dans les e-mails. PR #1 mergée.
 
 - **2026-07-13 — Florian (sociétés, listes, mobile)** : sociétés + rôles Basic/Admin (visibilité
   société via `allowedClientIds()`, page dédiée « Sociétés »), références + type Mono/Triphasé

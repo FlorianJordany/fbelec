@@ -108,7 +108,7 @@ export function Card({ children, style, pad=24, onClick, hover }) {
 }
 
 // ── Champ ─────────────────────────────────────────────────────
-export function Field({ label, icon, type="text", value, onChange, placeholder, hint }) {
+export function Field({ label, icon, type="text", value, onChange, placeholder, hint, autoComplete }) {
   const [focus,setFocus]=useState(false);
   return <label style={{display:"block"}}>
     <span style={{display:"block",fontSize:13.5,fontWeight:600,color:"var(--ink)",marginBottom:7}}>{label}</span>
@@ -117,7 +117,7 @@ export function Field({ label, icon, type="text", value, onChange, placeholder, 
       borderRadius:"var(--r-input)",height:50,transition:"border-color .15s ease",
       boxShadow:focus?"0 0 0 3px color-mix(in srgb,var(--jaune) 28%,transparent)":"none"}}>
       {icon&&<span style={{color:focus?"var(--ink)":"var(--muted)",display:"flex"}}><Icon name={icon} size={19}/></span>}
-      <input type={type} value={value} placeholder={placeholder}
+      <input type={type} value={value} placeholder={placeholder} autoComplete={autoComplete}
         onFocus={()=>setFocus(true)} onBlur={()=>setFocus(false)}
         onChange={e=>onChange&&onChange(e.target.value)}
         style={{flex:1,border:"none",outline:"none",background:"transparent",
@@ -141,11 +141,11 @@ export function SectionTitle({ icon, children, right }) {
 export function Toast({ message, type="success" }) {
   if (!message) return null;
   const bg = type==="error" ? "var(--c-blocked)" : "var(--noir)";
-  return <div style={{position:"fixed",bottom:26,left:"50%",transform:"translateX(-50%)",zIndex:250,
-    background:bg,color:"#fff",padding:"13px 22px",borderRadius:999,fontSize:14.5,
+  return <div style={{position:"fixed",bottom:26,left:16,right:16,margin:"0 auto",width:"fit-content",zIndex:250,
+    background:bg,color:"#fff",padding:"13px 22px",borderRadius:14,fontSize:14.5,
     fontFamily:"var(--font-head)",fontWeight:600,boxShadow:"var(--shadow-lg)",
     display:"flex",alignItems:"center",gap:9}}>
-    <Icon name={type==="error"?"alert":"check"} size={18} style={{color:type==="error"?"#fff":"var(--jaune)"}}/>{message}
+    <Icon name={type==="error"?"alert":"check"} size={18} style={{color:type==="error"?"#fff":"var(--jaune)",flexShrink:0}}/>{message}
   </div>;
 }
 
@@ -333,7 +333,10 @@ export function AddressAutocomplete({ value, onChange, onSelect, placeholder, di
 
   const pick=(f)=>{
     const p=f?.properties||{};
-    onSelect&&onSelect({ adresse:p.name||p.label||'', code_postal:p.postcode||'', commune:p.city||'' });
+    // position : centrage de la carte de localisation (de près sur un numéro, plus large sinon).
+    const [lng,lat]=f?.geometry?.coordinates||[];
+    const position=Number.isFinite(lat)&&Number.isFinite(lng)?{lat,lng,zoom:p.type==='housenumber'?18:16}:null;
+    onSelect&&onSelect({ adresse:p.name||p.label||'', code_postal:p.postcode||'', commune:p.city||'', position });
     setOpen(false); setResults([]);
   };
 
@@ -370,25 +373,34 @@ export function AddressAutocomplete({ value, onChange, onSelect, placeholder, di
   </div>;
 }
 
-// ── Localisation par point GPS (Leaflet chargé à la demande) ───
-// Échec du chargement (réseau, ou fichier remplacé par un redéploiement) : message à la place
-// de la carte, sans faire tomber le formulaire.
-const MapPicker = lazy(() => import('./MapPicker.jsx').catch(() => ({
+// ── Localisation par point GPS (carte chargée à la demande) ───
+// Google Maps (satellite + cadastre IGN) si une clé est configurée ; sinon, ou si Google ne
+// répond pas (script bloqué, clé refusée), carte IGN/Leaflet de secours. Échec du chargement
+// d'un fichier (réseau, redéploiement) : message à la place de la carte, sans faire tomber le
+// formulaire.
+const carteIndisponible = () => ({
   default: () => <div className="fb-map" style={{display:'grid',placeItems:'center',padding:16,textAlign:'center',color:'var(--muted)',fontSize:14}}>
     Impossible de charger la carte. Rechargez la page pour réessayer, ou saisissez une adresse.
   </div>,
-})));
-export function CarteGps({ value, onChange, commune, codePostal, onLocalite }) {
+});
+const MapGoogle = lazy(() => import('./MapGoogle.jsx').catch(carteIndisponible));
+const MapPicker = lazy(() => import('./MapPicker.jsx').catch(carteIndisponible));
+let googleIndisponible = !import.meta.env.VITE_GOOGLE_MAPS_KEY; // mémorisé pour la session
+export function CarteGps({ value, onChange, centre, commune, codePostal, onLocalite }) {
+  const [google,setGoogle]=useState(!googleIndisponible);
+  const Carte=google?MapGoogle:MapPicker;
   return <div>
-    <p style={{margin:'0 0 8px',fontSize:13,color:'var(--slate)',lineHeight:1.5}}>
-      Saisissez la commune pour centrer la carte, zoomez sur le terrain puis <strong>cliquez pour placer le point</strong> (déplaçable).
-      Plan et cadastre (numéros de parcelles) : icône en haut à droite de la carte.
-    </p>
     <Suspense fallback={<div className="fb-map" style={{display:'grid',placeItems:'center',color:'var(--muted)',fontSize:14}}>Chargement de la carte…</div>}>
-      <MapPicker value={value} onChange={onChange} commune={commune} codePostal={codePostal} onLocalite={onLocalite}/>
+      <Carte value={value} onChange={onChange} centre={centre} commune={commune} codePostal={codePostal} onLocalite={onLocalite}
+        onEchec={()=>{ googleIndisponible=true; setGoogle(false); }}/>
     </Suspense>
-    <div style={{marginTop:7,fontSize:13,color:value?'var(--c-done-ink)':'var(--muted)',fontWeight:value?600:400}}>
-      {value?`Point placé : ${value.lat.toFixed(5)}, ${value.lng.toFixed(5)}`:'Aucun point placé pour le moment.'}
+    <div style={{marginTop:7,display:'flex',flexWrap:'wrap',alignItems:'baseline',gap:'4px 14px',fontSize:13}}>
+      <span style={{color:value?'var(--c-done-ink)':'var(--muted)',fontWeight:value?600:400}}>
+        {value?`Point placé : ${value.lat.toFixed(5)}, ${value.lng.toFixed(5)}`:'Aucun point placé pour le moment.'}
+      </span>
+      {value&&<button type="button" onClick={()=>onChange(null)}
+        style={{background:'none',border:'none',padding:'6px 0',margin:'-6px 0',cursor:'pointer',
+          color:'var(--slate)',fontSize:13,textDecoration:'underline'}}>Retirer le point</button>}
     </div>
   </div>;
 }
@@ -421,8 +433,8 @@ export function AppHeader({ go, admin, isAdmin, onLogout }) {
   return <header style={{position:"sticky",top:0,zIndex:40,background:"#fff",borderBottom:"1px solid var(--line)"}}>
     <div className="fb-wrap" style={{height:68,display:"flex",alignItems:"center",gap:16}}>
       <Logo height={38} onClick={()=>window.location.href='https://suividechantier.fbelec.fr'}/>
-      <div style={{width:1,height:28,background:"var(--line)"}} className="fb-hide-mobile"/>
-      <div className="fb-hide-mobile" style={{display:"flex",alignItems:"center",gap:8}}>
+      <div style={{width:1,height:28,background:"var(--line)"}} className={admin?"fb-hide-entete":"fb-hide-mobile"}/>
+      <div className={admin?"fb-hide-entete":"fb-hide-mobile"} style={{display:"flex",alignItems:"center",gap:8}}>
         <span style={{fontFamily:"var(--font-head)",fontWeight:700,fontSize:15,color:"var(--ink)"}}>
           {admin?"Back-office":"Espace suivi"}
         </span>
@@ -444,6 +456,13 @@ export function AppHeader({ go, admin, isAdmin, onLogout }) {
         <Icon name="swap" size={16}/>
         <span className="fb-hide-mobile">{admin?"Voir côté client":"Voir côté FB ELEC"}</span>
       </button>}
+      <button onClick={()=>go("mon-compte")} className="fb-roleswap" title="Mon compte"
+        style={{display:"inline-flex",alignItems:"center",gap:8,padding:"8px 13px",
+          background:"var(--bg-soft)",border:"1px solid var(--line-strong)",borderRadius:999,
+          cursor:"pointer",fontFamily:"var(--font-head)",fontWeight:600,fontSize:13.5,color:"var(--ink)"}}>
+        <Icon name="user" size={16}/>
+        <span className="fb-hide-mobile">Mon compte</span>
+      </button>
       <button onClick={onLogout} title="Déconnexion"
         style={{display:"grid",placeItems:"center",width:40,height:40,borderRadius:999,
           background:"var(--bg-soft)",border:"1px solid var(--line-strong)",cursor:"pointer",color:"var(--slate)"}}>

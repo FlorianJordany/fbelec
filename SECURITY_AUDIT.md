@@ -41,7 +41,7 @@ Les vulnérabilités à corriger concernent surtout les **uploads de fichiers**,
 | 8 | **Basse** | tous les handlers d'écriture | **Validation d'entrée** limitée (présence/trim) : pas de bornes de longueur ni de format e-mail strict → abus/stockage non borné. |
 | 9 | **Basse** | `frontend` (`window.open`) | Ouverture d'onglet sans `noreferrer` (déjà `noopener`). |
 | 10 | **Basse / à vérifier** | déploiement o2switch | `.env` situé dans la racine du sous-domaine API : exposition possible si Apache sert les fichiers statiques directement. À **vérifier** (voir §5). |
-| 11 | **Info** | `frontend` (localStorage) | JWT stocké en `localStorage` (exposé en cas de XSS). Acceptable ici (pas de cookie/CSRF, React échappe), documenté. |
+| 11 | **Info** | `frontend` (localStorage) | JWT stocké en `localStorage` (exposé en cas de XSS, ou à un script tiers : Google Maps JS depuis le § 21, accepté). Acceptable ici (pas de cookie/CSRF, React échappe), documenté. |
 
 Points **vérifiés sans défaut** : SQL injection (aucune), IDOR client (filtrage `client_id`),
 SSRF (aucun fetch d'URL utilisateur côté serveur — la feature « agents » a été retirée),
@@ -147,7 +147,8 @@ open redirect (navigation interne, `?chantier=` casté en entier), secrets front
 - Tenir les dépendances à jour : `npm audit` périodique, surveiller `multer`/`sharp`/`nodemailer`.
 - **Amélioration future** : adopter `zod` pour une validation par schéma sur **toutes**
   les routes (actuellement validation ciblée sur les points sensibles).
-- Ne jamais exposer de secret via une variable `VITE_` (seul `VITE_API_URL`, public, est utilisé).
+- Ne jamais exposer de secret via une variable `VITE_` (seuls `VITE_API_URL` et
+  `VITE_GOOGLE_MAPS_KEY`, publics par nature, sont utilisés — cf. § 21).
 
 ## 7. Évolution UI — autocomplétion d'adresse (2026-06-18)
 
@@ -256,6 +257,136 @@ open redirect (navigation interne, `?chantier=` casté en entier), secrets front
   `backend/src/routes/admin/chantiers.js`, `backend/src/routes/client/chantiers.js`,
   `frontend/src/admin.jsx`, `frontend/src/client.jsx`. `node --check` OK ; build OK ; formulaire
   client vérifié en preview (2 champs Référence, bascule facturation, 0 erreur).
+
+## 22. Espace « Mon compte » : mot de passe et informations personnelles (2026-11-02)
+
+- **Routes** : `GET/PUT /api/client/compte` et `/api/admin/compte`, `PUT .../mot-de-passe`
+  (`routes/compte.js`). L'identifiant vient **uniquement du jeton** (anti-IDOR). Clients et
+  comptes FB ELEC ; champs modifiables en liste blanche (nom, e-mail, téléphone pour les clients),
+  UPDATE en merge. Noms de tables et de colonnes issus de constantes du code, valeurs paramétrées.
+- **Mot de passe** : règle unique `motDePasse()` (`utils/validate.js`) : 6 caractères minimum
+  après trim, 72 octets maximum (limite de bcrypt), identique à la première connexion. Le mot de
+  passe actuel est exigé pour le changer et pour changer d'e-mail (403 si faux, jamais 401 : le
+  front supprimerait le jeton et rechargerait la page).
+- **Coupure des sessions : compteur `mdp_version`** (migration `2026-11-02_mon_compte.sql`).
+  Incrémenté par `PUT .../mot-de-passe`, `change-code`, `reset-code`, l'usage d'un mot de passe
+  temporaire et le remplacement d'un provisoire par FB ELEC ; porté par le jeton (claim
+  `mv`, absent = 0) ; comparé par égalité dans `authClient` et `authAdmin`. Lu avec le hash à la
+  connexion : une connexion en cours pendant le changement obtient un jeton déjà périmé. Une
+  première version par date (`iat` / `mdp_modifie_le`) laissait survivre ces jetons 7 jours ; elle
+  n'a jamais été déployée. Une simple demande `forgot-password` n'incrémente pas : un tiers anonyme
+  ne doit pas pouvoir déconnecter une victime. Les jetons déjà émis comptent pour 0 : pas de déconnexion au
+  déploiement. **Migration à passer AVANT le backend** (sinon 500 sur toute route authentifiée).
+- **`change-code` fermé** : avant, toute session ouverte pouvait changer le mot de passe sans
+  l'ancien. Il exige maintenant le claim `provisoire`, posé uniquement par une connexion faite
+  avec le mot de passe provisoire : une session ordinaire ne peut pas contourner « Mon compte ».
+- **Comptes FB ELEC désactivés** : `authAdmin` lit désormais `actif` à chaque requête (accès coupé
+  aussitôt, au lieu de jusqu'à 7 jours).
+- **Limiteur `compteLimiter`** : 10 échecs / 15 min par IP, séparé de la connexion, lectures non
+  comptées. Le mot de passe actuel ne peut pas être deviné, et les échecs de connexion d'une même
+  box ne bloquent pas l'écran.
+- **Unicité de l'e-mail entre clients et FB ELEC** : le formulaire de connexion est commun et
+  UNIQUE ne couvre qu'une table. `PUT` compte vérifie l'autre table (409), après le contrôle du
+  mot de passe pour ne pas révéler les comptes existants.
+- **HTML dans les mails** : le nom est désormais saisi par le client. `sendCodeReset` et
+  `sendWelcomeClient` l'échappent (`esc()`), comme les autres gabarits actifs.
+- **E-mail normalisé** par `PUT /api/admin/clients/:id` (`vEmail`, 409 sur doublon) : des
+  majuscules bloquaient la connexion et le mot de passe oublié du client, sans message. La
+  migration remet en minuscules les e-mails clients existants.
+- **`apiFetch`** ne laisse plus passer de message technique (réseau coupé, page HTML de
+  l'hébergeur, limiteur en texte brut). Correctif central : profite à tous les écrans.
+- **Front** : après une déconnexion pendant l'envoi, le jeton n'est pas réécrit (`changerMdp`).
+- **Mot de passe oublié : temporaire rangé à part** (migration `2026-11-02_mdp_oublie.sql`, colonnes
+  `code_provisoire_hash`, `code_provisoire_expire`). Valable 24 h. Le mot de passe actuel reste
+  valable : un tiers qui connaît l'e-mail ne peut plus bloquer le compte ni déconnecter la personne.
+  Le temporaire remplace le mot de passe à sa première utilisation, de façon atomique : il devient
+  provisoire, et les sessions sont coupées. Il est annulé par : changement d'e-mail, changement de
+  mot de passe, `change-code`, `reset-code`, nouvelle demande (seul le dernier reçu vaut), échec
+  d'envoi du mail. L'UPDATE vérifie aussi l'e-mail lu : une adresse changée pendant la demande
+  n'envoie pas de code à l'ancienne boîte.
+- **Plafonds par compte, en base** (résistent aux redémarrages) : 1 demande d'oubli par 5 min et
+  6 par 24 h (`oubli_nb`, `oubli_depuis`) ; 3 changements d'e-mail par 24 h pour un client
+  (`email_modifs`, `email_modifs_depuis`, 429 au-delà ; FB ELEC peut toujours corriger). Plafond
+  d'oubli atteint : aucun mail, mais le dernier code reçu reste valable.
+- **Limiteurs par IP** : oubli 5 / h (réussites comprises), contact 5 / h, connexion 10 échecs /
+  15 min. Tous testés depuis le montage du routeur (`skip`) : un montage sur le chemin complet
+  laissait passer `/api/auth//forgot-password` et `/api/client//contact`. Oubli et connexion ont
+  des budgets séparés. Le front essaie le compte client d'abord : un client ne consomme plus un
+  échec à chaque connexion réussie. Un mauvais mot de passe coûte 2 échecs (client puis FB ELEC) :
+  blocage après 5 essais.
+- **Alerte à l'ancienne adresse** : envoyée à chaque changement d'e-mail, sans le nom ni la nouvelle
+  adresse. Ces deux valeurs sont saisies par le compte, et le mail peut viser la boîte d'un tiers ;
+  un voleur du mot de passe ne doit pas non plus écrire à sa victime ni lui être révélé.
+- **Format de l'e-mail** (`vEmail`) : `/ : < > , ; " ( ) \ [ ]` refusés. nodemailer lirait plusieurs
+  destinataires dans `a@b.fr,c@d.fr`, et une URL passait pour une adresse.
+- **Délais** : `HASH_FACTICE` comparé quand il n'y a ni compte ni temporaire, hachage fait même
+  sans compte dans `forgot-password`. Mesuré : 472 / 476 / 472 ms à la connexion (inconnu, existant,
+  temporaire en cours), réponse 103 / 104 ms à l'oubli.
+- **Correction d'e-mail par FB ELEC sur un compte au mot de passe provisoire non remplacé** : ce
+  code est parti à l'ancienne adresse, souvent une faute de frappe. Il cesse de valoir, un nouveau
+  part à la bonne adresse, les sessions sont coupées. Il n'est pas renvoyé dans la réponse.
+- **Codes générés** : lettres et chiffres uniquement (`!@#` retirés : le double-clic ne sélectionnait
+  qu'une partie du code).
+- **Revues adversariales** : 1re revue, 19 agents, 11 constats confirmés dont un doublon, 5 réfutés.
+  2e revue (oubli, alerte, disposition) : 28 confirmés, 2 réfutés ; 24 corrigés, 4 antérieurs laissés
+  à la décision de Florian (ci-dessous). Tests de bout en bout : 199/199 (PGlite, vrai Express,
+  vraies requêtes HTTP) ; attaques rejouées, toutes bloquées ; écrans vérifiés en preview.
+- **Limites acceptées / à revoir** :
+  - Le nouvel e-mail n'est pas confirmé par un lien (décision produit : le mot de passe actuel
+    suffit). Un client peut donc saisir l'adresse d'un tiers : les notifications et le mot de passe
+    oublié de ce compte y partiront. Contenu échappé, ancienne adresse prévenue, 3 changements / 24 h.
+  - L'obligation de changer le mot de passe provisoire saute si l'utilisateur recharge la page
+    (n'est pas une faille d'accès : il connaît déjà ce mot de passe). Décision confirmée le 2026-11-02.
+  - Comptes FB ELEC : pas de récupération autonome (`forgot-password` ne concerne que les clients),
+    remise à zéro en SQL uniquement.
+  - Limiteurs par IP en mémoire, par processus : remis à zéro au redémarrage. Les plafonds par
+    compte, en base, ne le sont pas.
+  - Non corrigés, antérieurs à ce lot : expéditeur affiché « FB ELEC> » si `SMTP_FROM` a la forme
+    `Nom <adresse>` documentée dans les guides (`mailer.js`) ; toast « Nouveau mot de passe envoyé »
+    même si le mail échoue (`admin.jsx`) ; guide client annonçant 3 documents obligatoires au lieu
+    de 2 (`client.jsx`) ; cibles tactiles petites sur l'écran de connexion à 375 px.
+  - `POST` et `PUT /api/admin/clients` ne vérifient pas `fbelec.admins` (réservés à FB ELEC).
+  - 6 caractères reste un minimum faible (règle existante, conservée à la demande).
+
+## 21. Carte GPS sur Google Maps + cadastre IGN, secours IGN/Leaflet (2026-10-24)
+
+- **Décision produit (Tony, 23-24/10)** : carte de pointage sur Google Maps (imagerie satellite,
+  modèle formulaire Enedis) ; remplace « IGN/OSM uniquement » du § 17-18.
+- **Clé `VITE_GOOGLE_MAPS_KEY`** (front, `frontend/.env` = clé DEV, `frontend/.env.production` =
+  clé PROD ; fichiers non versionnés). **Exception assumée à « rien en `VITE_` »** : une clé Maps
+  JavaScript API est publique par nature (visible dans le navigateur). Sa protection est côté
+  Google Cloud : **restriction aux référents** (DEV : `fbelec.sc1qize9193.universe.wf` http/https
+  + `localhost:5173` ; PROD : `https://suividechantier.fbelec.fr/*` uniquement) **et à la seule
+  Maps JavaScript API** ; budget + alertes en place. Aucune autre API Google activée (recherche
+  d'adresse = BAN, commune du point = geo.api.gouv.fr, gratuites).
+- **Chargement** : balise `<script>` vers `maps.googleapis.com` créée à la demande
+  (`MapGoogle.jsx`, chunk lazy), **aucune dépendance npm ajoutée**. Schéma https explicite
+  (service tiers fixe).
+- **Secours** : si la clé est absente, le script injoignable, le délai dépassé (10 s), la clé
+  refusée (`gm_authFailure`, appelé **une seule fois par page** → erreur mémorisée au niveau du
+  module) ou la carte **dégradée** (facturation inactive, quota… : Google n'appelle PAS
+  `gm_authFailure`, il écrit seulement « Google Maps JavaScript API error: … » dans la console →
+  `console.error` est observé, sans rien masquer), la carte IGN/Leaflet (`MapPicker.jsx`) prend
+  le relais pour la session. Vérifié en preview : clé invalide (`InvalidKeyMapError`) → bascule
+  IGN ; clé DEV sans facturation active (`BillingNotEnabledMapError`) → constat du mode dégradé
+  qui a motivé l'observation de la console.
+- **Premier script tiers exécuté dans l'origine du front** : Google Maps JS (fournisseur de
+  confiance), chargé seulement à l'ouverture de la carte (formulaires de création client et
+  admin) puis actif pour la session. Il a accès au JWT en `localStorage` (`fb_token`), y compris
+  celui d'un admin FB ELEC → risque n° 11 du § 2 réévalué et **accepté**. Pas de CSP sur le front
+  statique. Données transmises à Google : IP (déjà le cas via Google Fonts), zone consultée,
+  point pointé (coordonnées du chantier).
+- Revue adversariale (12 agents, 8 constats confirmés sur 9) : bascule sur carte dégradée et
+  refus de clé survenu pendant un démontage, réponse geo.api.gouv.fr obsolète ignorée (dernier
+  point seul), plein écran non mentionné sur iPhone (absent sur iOS) + carte plus haute sur
+  mobile, boutons Plan / Satellite forcés (`HORIZONTAL_BAR`), indicateur de chargement, guide
+  PROD corrigé (`.env.production`).
+- Cadastre : tuiles IGN WMTS (`PCI vecteur`) en `ImageMapType` superposé, zoom 15 à 19, mention
+  « Cadastre © IGN ». Marqueur `google.maps.Marker` (pas de Map ID requis).
+- Aucune donnée nouvelle côté backend (`gps_lat/gps_lng` inchangés) ; helpers communs
+  `frontend/src/carte.js` (commune du point, centrage BAN) partagés par les deux cartes.
+- **À vérifier au déploiement** : `dist/` PROD contient la clé PROD (pas la DEV) ; tout nouveau
+  domaine front doit être ajouté aux référents de la clé (sinon bascule automatique sur IGN).
 
 ## 20. Abonnés gérés aussi par le créateur du chantier et par FB ELEC (2026-10-19)
 

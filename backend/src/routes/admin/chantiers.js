@@ -34,7 +34,7 @@ router.get('/', async (req, res, next) => {
     const { rows } = await pool.query(
       `SELECT c.id, c.reference, c.reference_client, c.nom, c.adresse, c.commune, c.statut,
               c.derniere_maj, c.updated_at, c.actif, c.archive, c.action_requise_titre, c.vu_admin,
-              cl.nom AS client_nom, cl.email AS client_email, s.nom AS societe_nom,
+              cl.nom AS client_nom, cl.email AS client_email, cl.societe_id, s.nom AS societe_nom,
               (SELECT COUNT(*) FROM fbelec.chantier_etapes WHERE chantier_id = c.id AND etat = 'done')  AS etapes_done,
               (SELECT COUNT(*) FROM fbelec.chantier_etapes WHERE chantier_id = c.id AND etat <> 'na')   AS etapes_total,
               (SELECT re.label FROM fbelec.chantier_etapes ce JOIN fbelec.ref_etapes re ON re.id = ce.etape_id

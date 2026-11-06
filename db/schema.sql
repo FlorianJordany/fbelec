@@ -39,6 +39,7 @@ CREATE TABLE fbelec.admins (
   email         text NOT NULL UNIQUE,
   password_hash text NOT NULL,
   actif         boolean DEFAULT true NOT NULL,
+  mdp_version   integer DEFAULT 0 NOT NULL,
   created_at    timestamptz DEFAULT now() NOT NULL,
   updated_at    timestamptz DEFAULT now() NOT NULL
 );
@@ -59,6 +60,13 @@ CREATE TABLE fbelec.clients (
   telephone        text,
   actif            boolean DEFAULT true NOT NULL,
   must_change_code boolean DEFAULT false NOT NULL,
+  mdp_version      integer DEFAULT 0 NOT NULL,
+  code_provisoire_hash   text,
+  code_provisoire_expire timestamptz,
+  oubli_nb         integer DEFAULT 0 NOT NULL,
+  oubli_depuis     timestamptz,
+  email_modifs     integer DEFAULT 0 NOT NULL,
+  email_modifs_depuis timestamptz,
   societe_id       integer REFERENCES fbelec.societes(id) ON DELETE SET NULL,
   role_societe     text DEFAULT 'basic' NOT NULL,
   created_at       timestamptz DEFAULT now() NOT NULL,

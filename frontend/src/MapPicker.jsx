@@ -1,31 +1,35 @@
 import { useEffect, useRef } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
+import { communeDuPoint, centreCommune } from './carte.js';
 
-// Fonds libres et sans clé : OpenStreetMap (plan) + IGN Géoplateforme (photo aérienne, cadastre).
+// Carte de SECOURS (si Google Maps ne se charge pas) : fonds libres et sans clé, OpenStreetMap
+// (plan) + IGN Géoplateforme (photo aérienne, cadastre).
 // Schémas https explicites assumés (services tiers fixes, jamais en mixed-content).
 const IGN = (layer, style, format) =>
   'https://data.geopf.fr/wmts?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0'
   + `&LAYER=${layer}&STYLE=${encodeURIComponent(style)}&TILEMATRIXSET=PM`
   + `&TILEMATRIX={z}&TILEROW={y}&TILECOL={x}&FORMAT=${format}`;
-const BAN_URL = 'https://api-adresse.data.gouv.fr/search/';
-const GEO_URL = 'https://geo.api.gouv.fr/communes';
 const FRANCE = [46.6, 2.4];
 
 const pin = L.divIcon({ className: 'fb-map-pin', html: '<span></span>', iconSize: [30, 30], iconAnchor: [15, 29] });
 
 // Carte de localisation : clic = place le point (déplaçable). Le point remplace l'adresse
 // quand elle n'existe pas encore. onLocalite reçoit la commune qui CONTIENT le point.
-export default function MapPicker({ value, onChange, commune, codePostal, onLocalite }) {
+export default function MapPicker({ value, onChange, centre, commune, codePostal, onLocalite }) {
   const boxRef = useRef(null);
   const mapRef = useRef(null);
   const markerRef = useRef(null);
   const cbRef = useRef({});
   cbRef.current = { onChange, onLocalite, codePostal };
+  const centreRef = useRef(centre);
+  centreRef.current = centre;
+  const centreInitial = useRef(centre);
 
   useEffect(() => {
     // Double-clic désactivé : sinon zoomer par double-clic place aussi le point.
-    const map = L.map(boxRef.current, { scrollWheelZoom: false, doubleClickZoom: false });
+    // Mobile : un doigt fait défiler la page, deux doigts déplacent/zooment la carte.
+    const map = L.map(boxRef.current, { scrollWheelZoom: false, doubleClickZoom: false, dragging: !L.Browser.mobile });
     const plan = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',
       { maxZoom: 19, attribution: '© OpenStreetMap' });
     const photo = L.tileLayer(IGN('ORTHOIMAGERY.ORTHOPHOTOS', 'normal', 'image/jpeg'),
@@ -36,19 +40,12 @@ export default function MapPicker({ value, onChange, commune, codePostal, onLoca
     photo.addTo(map);
     L.control.layers({ 'Vue aérienne': photo, 'Plan': plan }, { 'Cadastre': cadastre }).addTo(map);
 
+    // Seule la réponse du dernier point placé renseigne commune et code postal.
+    let dernier = 0;
     const localiser = async (p) => {
-      try {
-        const r = await fetch(`${GEO_URL}?lat=${p.lat}&lon=${p.lng}&fields=nom,codesPostaux&format=json`);
-        const c = (await r.json())?.[0];
-        if (c) {
-          // Code postal : celui saisi s'il appartient à la commune, sinon l'unique code de la
-          // commune ; vide si la commune en a plusieurs (l'utilisateur le précise).
-          const cps = c.codesPostaux || [];
-          const saisi = (cbRef.current.codePostal || '').trim();
-          const cp = cps.includes(saisi) ? saisi : (cps.length === 1 ? cps[0] : '');
-          cbRef.current.onLocalite?.({ commune: c.nom, code_postal: cp });
-        }
-      } catch { /* hors ligne : la commune reste saisissable à la main */ }
+      const n = ++dernier;
+      const loc = await communeDuPoint(p, cbRef.current.codePostal);
+      if (loc && n === dernier) cbRef.current.onLocalite?.(loc);
     };
 
     // Marqueur posé là où l'utilisateur a cliqué ; coordonnées transmises ramenées dans ±180°.
@@ -69,18 +66,25 @@ export default function MapPicker({ value, onChange, commune, codePostal, onLoca
     return () => { map.remove(); mapRef.current = null; markerRef.current = null; };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Tant qu'aucun point n'est placé, la carte se centre sur la commune saisie.
+  // Adresse choisie dans la liste : la carte zoome dessus, le point reste à placer ou à déplacer.
+  // Au montage avec un point déjà placé (retour depuis l'étape 2), la vue reste sur le point.
   useEffect(() => {
-    if (markerRef.current || !commune || commune.trim().length < 2) return;
+    if (!centre || !mapRef.current) return;
+    if (centre === centreInitial.current && value) return;
+    mapRef.current.setView([centre.lat, centre.lng], centre.zoom);
+  }, [centre]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Point retiré depuis le formulaire : le marqueur disparaît, un clic en replace un.
+  useEffect(() => {
+    if (!value && markerRef.current) { markerRef.current.remove(); markerRef.current = null; }
+  }, [value]);
+
+  // Tant qu'aucun point n'est placé ni aucune adresse choisie, la carte se centre sur la commune saisie.
+  useEffect(() => {
+    if (markerRef.current || centreRef.current || !commune || commune.trim().length < 2) return;
     const t = setTimeout(async () => {
-      try {
-        const cp = /^\d{5}$/.test(codePostal || '') ? `&postcode=${codePostal}` : '';
-        const r = await fetch(`${BAN_URL}?q=${encodeURIComponent(commune)}&type=municipality&limit=1${cp}`);
-        const f = (await r.json())?.features?.[0];
-        if (f && mapRef.current && !markerRef.current) {
-          mapRef.current.setView([f.geometry.coordinates[1], f.geometry.coordinates[0]], 14);
-        }
-      } catch { /* centrage indicatif, sans effet si le service ne répond pas */ }
+      const c = await centreCommune(commune, codePostal);
+      if (c && mapRef.current && !markerRef.current && !centreRef.current) mapRef.current.setView([c.lat, c.lng], 14);
     }, 500);
     return () => clearTimeout(t);
   }, [commune, codePostal]);

@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { apiFetch, API_BASE, chantierBadge, downloadFile, downloadPdf, CAT_LABELS, CAT_REQUIRED, DOC_OPTIONS, libelleGps } from './api.js';
+import { apiFetch, API_BASE, MDP_MIN, NET_ERR, chantierBadge, downloadFile, downloadPdf, CAT_LABELS, CAT_REQUIRED, DOC_OPTIONS, libelleGps } from './api.js';
 import { Icon, Logo, Btn, StatusPill, Card, Field, SectionTitle, Toast, useToast, AppHeader,
          AddressAutocomplete, CarteGps, GpsLinks, Footer } from './ui.jsx';
 
@@ -16,11 +16,13 @@ export function Login({ onLogin }) {
   const [forgotEmail,setForgotEmail]=useState("");
   const [forgotSent,setForgotSent]=useState(false);
   const [forgotLoading,setForgotLoading]=useState(false);
+  const [forgotErr,setForgotErr]=useState("");
+  // Ignore la réponse d'une demande abandonnée (Retour pendant l'envoi).
+  const forgotReq=useRef(0);
 
   // Login direct sans apiFetch pour éviter le reload sur 401.
   // Erreurs typées pour afficher la vraie cause : e.network (serveur injoignable,
   // wifi public/portail captif qui intercepte la requête) et e.status (401, 429…).
-  const NET_ERR = "Connexion au serveur impossible. Vérifiez votre réseau (wifi public, portail captif…) puis réessayez.";
   const tryLogin = async (path, body) => {
     let r;
     try {
@@ -47,18 +49,20 @@ export function Login({ onLogin }) {
     if (!email.trim()||!password.trim()){setErr("Merci de renseigner votre e-mail et votre mot de passe.");return;}
     setLoading(true);setErr("");
     try {
-      // Essai admin d'abord
+      // Essai client d'abord : chaque essai raté compte dans le limiteur de connexion, et les
+      // clients sont les plus nombreux à se connecter depuis une même box.
+      let data;
       try {
-        const data = await tryLogin('/api/auth/admin/login',{email,password});
-        localStorage.setItem('fb_token',data.token);
+        data = await tryLogin('/api/auth/client/login',{email,code_suivi:password});
+      } catch(clientErr) {
+        if (!clientErr.message.includes('Identifiants')) throw clientErr;
+        // Essai admin
+        const admin = await tryLogin('/api/auth/admin/login',{email,password});
+        localStorage.setItem('fb_token',admin.token);
         // Rechargement complet : repartir d'un état neuf (aucun cache en mémoire).
         window.location.reload();
         return;
-      } catch(adminErr) {
-        if (!adminErr.message.includes('Identifiants')) throw adminErr;
       }
-      // Essai client
-      const data = await tryLogin('/api/auth/client/login',{email,code_suivi:password});
       localStorage.setItem('fb_token',data.token);
       localStorage.setItem('fb_client',JSON.stringify(data.client));
       if (data.must_change_code) { onLogin(data.client, true); return; }
@@ -72,18 +76,27 @@ export function Login({ onLogin }) {
     finally{setLoading(false);}
   };
 
+  const ouvrirOubli = () => {
+    forgotReq.current++;
+    setForgotLoading(false);setForgotErr("");setForgotSent(false);
+    setForgotMode(true);setForgotEmail(email);
+  };
+
+  const fermerOubli = () => {
+    forgotReq.current++;
+    setForgotLoading(false);setForgotMode(false);
+  };
+
   const submitForgot = async e => {
     e.preventDefault();
-    if (!forgotEmail.trim()){return;}
-    setForgotLoading(true);
+    if (!forgotEmail.trim()){setForgotErr("Merci de renseigner votre e-mail.");return;}
+    const req=++forgotReq.current;
+    setForgotLoading(true);setForgotErr("");
     try {
-      await fetch(API_BASE+'/api/auth/forgot-password',{
-        method:'POST',headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({email:forgotEmail.trim()})
-      });
-      setForgotSent(true);
-    } catch {}
-    finally{setForgotLoading(false);}
+      await apiFetch('/api/auth/forgot-password',{method:'POST',body:{email:forgotEmail.trim()}});
+      if (req===forgotReq.current) setForgotSent(true);
+    } catch(e){if (req===forgotReq.current) setForgotErr(e.message);}
+    finally{if (req===forgotReq.current) setForgotLoading(false);}
   };
 
   const aside = <div className="fb-login-aside" style={{position:"relative",background:"var(--noir)",
@@ -149,7 +162,7 @@ export function Login({ onLogin }) {
                 <Btn variant="primary" size="lg" full type="submit" iconR="chevR" loading={loading}>
                   Se connecter
                 </Btn>
-                <button type="button" onClick={()=>{setForgotMode(true);setForgotEmail(email);}}
+                <button type="button" onClick={ouvrirOubli}
                   style={{background:"none",border:"none",cursor:"pointer",color:"var(--slate)",
                     fontSize:13.5,textDecoration:"underline",padding:0,textAlign:"center"}}>
                   Mot de passe oublié ?
@@ -165,17 +178,17 @@ export function Login({ onLogin }) {
                       <Icon name="check" size={28}/>
                     </div>
                     <h2 style={{margin:"0 0 12px",fontFamily:"var(--font-head)",fontWeight:700,fontSize:22,color:"var(--ink)"}}>
-                      E-mail envoyé !
+                      Demande enregistrée
                     </h2>
                     <p style={{margin:"0 0 28px",fontSize:15,color:"var(--slate)",lineHeight:1.6}}>
-                      Si cet e-mail est lié à un compte, vous recevrez un mot de passe temporaire d'ici quelques instants.
+                      Si cet e-mail est lié à un compte client, un mot de passe temporaire valable 24 heures vous a été envoyé. Vérifiez vos courriers indésirables. Une seule demande est prise en compte toutes les 5 minutes. Votre mot de passe actuel reste valable jusqu'à ce que vous utilisiez le mot de passe temporaire. Compte FB ELEC : contactez votre administrateur.
                     </p>
-                    <Btn variant="primary" full onClick={()=>{setForgotMode(false);setForgotSent(false);}}>
+                    <Btn variant="primary" full onClick={fermerOubli}>
                       Retour à la connexion
                     </Btn>
                   </div>
                 : <form onSubmit={submitForgot}>
-                    <button type="button" onClick={()=>setForgotMode(false)}
+                    <button type="button" onClick={fermerOubli}
                       style={{display:"inline-flex",alignItems:"center",gap:7,background:"none",border:"none",
                         cursor:"pointer",color:"var(--slate)",fontSize:14,fontFamily:"var(--font-head)",
                         fontWeight:600,padding:0,marginBottom:28}}>
@@ -185,12 +198,18 @@ export function Login({ onLogin }) {
                       Mot de passe oublié
                     </h1>
                     <p style={{margin:"0 0 28px",fontSize:15,color:"var(--slate)",lineHeight:1.55}}>
-                      Entrez votre e-mail, vous recevrez un mot de passe temporaire.
+                      Entrez l'e-mail de votre compte client, vous recevrez un mot de passe temporaire. Compte FB ELEC : contactez votre administrateur.
                     </p>
                     <div style={{display:"grid",gap:18}}>
                       <Field label="E-mail" icon="mail" type="email" value={forgotEmail}
-                        onChange={v=>setForgotEmail(v)} placeholder="vous@exemple.fr"/>
+                        onChange={v=>{setForgotEmail(v);setForgotErr("");}} placeholder="vous@exemple.fr"/>
                     </div>
+                    {forgotErr&&<div style={{marginTop:16,display:"flex",gap:9,alignItems:"center",
+                      background:"color-mix(in srgb,var(--c-blocked) 8%,#fff)",
+                      border:"1px solid color-mix(in srgb,var(--c-blocked) 25%,transparent)",
+                      color:"var(--c-blocked-ink)",fontSize:14,padding:"10px 14px",borderRadius:"var(--r-input)"}}>
+                      <Icon name="alert" size={17}/>{forgotErr}
+                    </div>}
                     <div style={{marginTop:24}}>
                       <Btn variant="primary" size="lg" full type="submit" iconR="chevR" loading={forgotLoading}>
                         Envoyer le mot de passe temporaire
@@ -1259,8 +1278,8 @@ export function NouveauChantierClient({ go, onLogout, isAdmin }) {
   const [docs,setDocs]=useState({permis_construire:null,plan_situation:null,plan_masse:null,mandat:null});
   const [photos,setPhotos]=useState([]);
   const [commentaire,setCommentaire]=useState('');
-  const [gpsMode,setGpsMode]=useState(false);
   const [gps,setGps]=useState(null);
+  const [centreCarte,setCentreCarte]=useState(null);
   const [factForcee,setFactForcee]=useState(false);
   const [loading,setLoading]=useState(false);
   const [err,setErr]=useState('');
@@ -1271,25 +1290,22 @@ export function NouveauChantierClient({ go, onLogout, isAdmin }) {
   const addPhotos=e=>setPhotos(p=>[...p,...Array.from(e.target.files)]);
   const removePhoto=i=>setPhotos(p=>p.filter((_,j)=>j!==i));
 
-  // Sans adresse, le point GPS la remplace ; la facturation doit alors être une vraie adresse postale.
-  // L'adresse éventuellement tapée est conservée (non envoyée en mode GPS) pour un retour sans perte.
-  const basculerGps=()=>{
-    if (!gpsMode) {
-      setGpsMode(true);
-      if (factType==='identique') { setFactType('differente'); setFactForcee(true); if(!factReference) setFactReference(form.reference_client); }
-    } else {
-      setGpsMode(false); setGps(null);
-      if (factForcee) { setFactType('identique'); setFactForcee(false); }
-    }
-  };
-  const adresseChantier = gpsMode ? (gps?libelleGps(gps):'') : form.adresse;
+  // Adresse OU point sur la carte, au moins l'un des deux ; les deux sont enregistrés s'ils sont
+  // donnés. Point sans adresse : la facturation doit être une vraie adresse postale.
+  const sansAdresse=!form.adresse.trim();
+  const factImpossible=sansAdresse&&!!gps;
+  useEffect(()=>{
+    if (factImpossible&&factType==='identique') { setFactType('differente'); setFactForcee(true); if(!factReference) setFactReference(form.reference_client); }
+    else if (!sansAdresse&&factForcee) { setFactType('identique'); setFactForcee(false); }
+  },[factImpossible,sansAdresse]); // eslint-disable-line react-hooks/exhaustive-deps
+  const adresseChantier = form.adresse.trim() || (gps?libelleGps(gps):'');
   const adresseFact = factType==='identique'
     ? [form.adresse,form.code_postal,form.commune].filter(Boolean).join(', ')
     : [factAdresse,factCp,factCommune].filter(Boolean).join(', ');
   const dureeFinal = dureeMontant ? `${dureeMontant} ${dureeUnite}` : '';
   const canStep2 = adresseChantier&&form.commune&&form.puissance_demandee&&form.puissance_type
     &&form.date_debut_chantier&&dureeMontant&&form.terrain_viabilise&&form.reference_client.trim()
-    &&(factType==='identique'||(factAdresse&&factCommune&&factReference.trim()));
+    &&(factType==='identique'?!sansAdresse:(factAdresse&&factCommune&&factReference.trim()));
   const canSubmit=CAT_REQUIRED.every(k=>docs[k]);
 
   async function submit() {
@@ -1304,8 +1320,8 @@ export function NouveauChantierClient({ go, onLogout, isAdmin }) {
         facturation_email: factType==='differente'?factEmail:'',
         mandat_fourni: !!docs.mandat,
         commentaire: commentaire.trim(),
-        adresse: gpsMode?'':form.adresse,
-        gps_lat: gpsMode&&gps?gps.lat:null, gps_lng: gpsMode&&gps?gps.lng:null
+        adresse: form.adresse.trim(),
+        gps_lat: gps?gps.lat:null, gps_lng: gps?gps.lng:null
       }});
       // Upload docs
       for (const [cat,file] of Object.entries(docs)) {
@@ -1376,20 +1392,22 @@ export function NouveauChantierClient({ go, onLogout, isAdmin }) {
               placeholder="Société ou nom du client"/>
           </div>
           <div>
-            <label style={labelSt}>{gpsMode?'Emplacement du chantier *':'Adresse du chantier *'}</label>
-            {gpsMode
-              ? <CarteGps value={gps} onChange={setGps} commune={form.commune} codePostal={form.code_postal}
-                  onLocalite={l=>setForm(f=>({...f,commune:l.commune||f.commune,code_postal:l.code_postal}))}/>
-              : <AddressAutocomplete value={form.adresse}
-                  onChange={v=>setForm(f=>({...f,adresse:v}))}
-                  onSelect={a=>setForm(f=>({...f,adresse:a.adresse,
-                    code_postal:a.code_postal||f.code_postal, commune:a.commune||f.commune}))}
-                  inputStyle={inputSt} placeholder="ex. 12 rue des Acacias…"/>}
-            <button type="button" onClick={basculerGps}
-              style={{marginTop:8,display:'inline-flex',alignItems:'center',gap:6,background:'none',border:'none',
-                padding:0,cursor:'pointer',color:'var(--jaune-deep)',fontFamily:'var(--font-head)',fontWeight:700,fontSize:13.5}}>
-              <Icon name="pin" size={15}/>{gpsMode?"J'ai une adresse : la saisir":"Pas encore d'adresse ? Placer un point sur la carte"}
-            </button>
+            <label style={labelSt}>Adresse du chantier {gps?<span style={{color:'var(--muted)',fontWeight:400}}>(facultatif)</span>:'*'}</label>
+            <AddressAutocomplete value={form.adresse}
+              onChange={v=>{ setForm(f=>({...f,adresse:v})); setCentreCarte(null); }}
+              onSelect={a=>{ setForm(f=>({...f,adresse:a.adresse,
+                code_postal:a.code_postal||f.code_postal, commune:a.commune||f.commune}));
+                if(a.position) setCentreCarte(a.position); }}
+              inputStyle={inputSt} placeholder="ex. 12 rue des Acacias…"/>
+            <div style={{marginTop:5,fontSize:12.5,color:'var(--muted)'}}>
+              Pas encore d'adresse ? Laissez ce champ vide et placez un point sur la carte.
+            </div>
+          </div>
+          <div>
+            <label style={labelSt}>Emplacement sur la carte {sansAdresse?'*':<span style={{color:'var(--muted)',fontWeight:400}}>(facultatif)</span>}</label>
+            {/* Commune et code postal déduits du point seulement sans adresse : l'adresse fait foi. */}
+            <CarteGps value={gps} onChange={setGps} centre={centreCarte} commune={form.commune} codePostal={form.code_postal}
+              onLocalite={l=>setForm(f=>f.adresse.trim()?f:({...f,commune:l.commune||f.commune,code_postal:l.code_postal}))}/>
           </div>
           <div className="fb-form2" style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:14}}>
             <div>
@@ -1412,13 +1430,13 @@ export function NouveauChantierClient({ go, onLogout, isAdmin }) {
           <div>
             <label style={labelSt}>Adresse de facturation *</label>
             <select style={inputSt} value={factType}
-              onChange={e=>{ const v=e.target.value; setFactType(v);
+              onChange={e=>{ const v=e.target.value; setFactType(v); setFactForcee(false);
                 if(v==='differente'&&!factReference)setFactReference(form.reference_client); }}>
-              <option value="identique" disabled={gpsMode}>Identique à l'adresse du chantier</option>
+              <option value="identique" disabled={factImpossible}>Identique à l'adresse du chantier</option>
               <option value="differente">Différente</option>
             </select>
-            {gpsMode&&<div style={{marginTop:5,fontSize:12.5,color:'var(--muted)'}}>
-              Chantier localisé par point GPS : indiquez une adresse postale de facturation.
+            {factImpossible&&<div style={{marginTop:5,fontSize:12.5,color:'var(--muted)'}}>
+              Chantier sans adresse : indiquez une adresse postale de facturation.
             </div>}
           </div>
           {factType==='differente'&&<>
@@ -1581,6 +1599,7 @@ export function NouveauChantierClient({ go, onLogout, isAdmin }) {
         <div style={{display:'grid',gap:10,marginBottom:20}}>
           {[
             ['Adresse',`${adresseChantier}, ${form.commune}${form.code_postal?' '+form.code_postal:''}`],
+            ...(gps&&!sansAdresse?[['Point GPS',`${gps.lat.toFixed(5)}, ${gps.lng.toFixed(5)}`]]:[]),
             ['Adresse facturation',adresseFact],
             ['Puissance',`${form.puissance_demandee} kVA — ${form.puissance_type==='monophase'?'Monophasé':'Triphasé'}`],
             ['Terrain viabilisé',form.terrain_viabilise==='oui'?'Oui':'Non'],
@@ -1763,6 +1782,140 @@ export function EditChantierInfos({ chantierId, go, onLogout, isAdmin }) {
 // ═════════════════════════════════════════════════════════════
 //  ÉCRAN CHANGEMENT DE CODE (premier login client)
 // ═════════════════════════════════════════════════════════════
+// ═════════════════════════════════════════════════════════════
+//  MON COMPTE (client et FB ELEC)
+// ═════════════════════════════════════════════════════════════
+export function MonCompte({ go, onLogout, isAdmin }) {
+  const base=isAdmin?'/api/admin/compte':'/api/client/compte';
+  const retour=isAdmin?'admin-list':'dashboard';
+  const [toast,showToast]=useToast();
+  const [compte,setCompte]=useState(null); // valeurs enregistrées
+  const [erreur,setErreur]=useState("");
+  const [form,setForm]=useState({nom:"",email:"",telephone:""});
+  const [mdpEmail,setMdpEmail]=useState("");
+  const [savingInfos,setSavingInfos]=useState(false);
+  const [mdp,setMdp]=useState({actuel:"",nouveau:"",confirmer:""});
+  const [afficher,setAfficher]=useState(false);
+  const [savingMdp,setSavingMdp]=useState(false);
+
+  const charger=c=>{ setCompte(c); setForm({nom:c.nom||"",email:c.email||"",telephone:c.telephone||""}); };
+  useEffect(()=>{
+    apiFetch(base).then(charger).catch(e=>setErreur(e.message));
+  },[base]);
+
+  const page=contenu=><div style={{minHeight:"100vh",background:"var(--bg-soft)",display:"flex",flexDirection:"column"}}>
+    <AppHeader go={go} admin={isAdmin} isAdmin={isAdmin} onLogout={onLogout}/>
+    {contenu}
+    <Footer/>
+    <Toast message={toast.msg} type={toast.type}/>
+  </div>;
+
+  if (erreur) return page(<main className="fb-wrap" style={{flex:1,paddingTop:40,paddingBottom:60}}>
+    <Card style={{textAlign:"center"}}>
+      <p style={{margin:"0 0 18px",color:"var(--slate)",fontSize:14.5}}>{erreur}</p>
+      <Btn variant="dark" icon="arrowL" onClick={()=>go(retour)}>Retour</Btn>
+    </Card>
+  </main>);
+  if (!compte) return page(<div style={{flex:1}}><div className="fb-spinner"/></div>);
+
+  const avecTelephone='telephone' in compte;
+  const emailChange=form.email.trim().toLowerCase()!==compte.email;
+  const infosModifiees=form.nom!==(compte.nom||"")||emailChange||(avecTelephone&&form.telephone!==(compte.telephone||""));
+
+  const enregistrerInfos=async e=>{
+    e.preventDefault();
+    if (!form.nom.trim()) { showToast("Le nom est obligatoire.","error"); return; }
+    if (emailChange&&!mdpEmail) { showToast("Saisissez votre mot de passe actuel pour changer d'e-mail.","error"); return; }
+    setSavingInfos(true);
+    try {
+      const body={nom:form.nom,email:form.email};
+      if (avecTelephone) body.telephone=form.telephone;
+      if (emailChange) body.mot_de_passe_actuel=mdpEmail;
+      charger(await apiFetch(base,{method:'PUT',body}));
+      setMdpEmail("");
+      showToast(emailChange?"Enregistré. Connectez-vous désormais avec votre nouvel e-mail ✓":"Informations enregistrées ✓");
+    } catch(e){ showToast(e.message,"error"); }
+    finally{ setSavingInfos(false); }
+  };
+
+  const changerMdp=async e=>{
+    e.preventDefault();
+    if (mdp.nouveau.trim().length<MDP_MIN) { showToast(`Le mot de passe doit faire au moins ${MDP_MIN} caractères.`,"error"); return; }
+    if (mdp.nouveau!==mdp.confirmer) { showToast("Les deux mots de passe ne correspondent pas.","error"); return; }
+    setSavingMdp(true);
+    try {
+      const r=await apiFetch(`${base}/mot-de-passe`,{method:'PUT',body:{actuel:mdp.actuel,nouveau:mdp.nouveau}});
+      // Les sessions ouvertes sont coupées par le changement : celle-ci continue avec le nouveau jeton
+      // (sauf si l'utilisateur s'est déconnecté pendant l'envoi).
+      if (localStorage.getItem('fb_token')) localStorage.setItem('fb_token',r.token);
+      setMdp({actuel:"",nouveau:"",confirmer:""});
+      showToast("Mot de passe modifié. Vos autres appareils sont déconnectés ✓");
+    } catch(e){ showToast(e.message,"error"); }
+    finally{ setSavingMdp(false); }
+  };
+
+  const typeMdp=afficher?"text":"password";
+  return page(<>
+    <div className="fb-wrap" style={{paddingTop:22}}>
+      <button onClick={()=>go(retour)} style={{display:"inline-flex",alignItems:"center",gap:7,
+        background:"none",border:"none",cursor:"pointer",color:"var(--slate)",fontSize:14,
+        fontFamily:"var(--font-head)",fontWeight:600,padding:0}}>
+        <Icon name="arrowL" size={17}/>{isAdmin?"Tous les chantiers":"Mes chantiers"}
+      </button>
+      <h1 style={{margin:"14px 0 0",fontFamily:"var(--font-display)",fontWeight:700,fontSize:32,
+        textTransform:"uppercase",color:"var(--ink)",lineHeight:1.06}}>Mon compte</h1>
+    </div>
+    <main className="fb-wrap" style={{flex:1,paddingTop:22,paddingBottom:60}}>
+      <div className="fb-form2" style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:24,alignItems:"start"}}>
+        <Card>
+          <SectionTitle icon="user">Mes informations</SectionTitle>
+          <form onSubmit={enregistrerInfos} style={{display:"grid",gap:16}}>
+            <Field label="Nom" icon="user" value={form.nom} autoComplete="name"
+              onChange={v=>setForm(f=>({...f,nom:v}))}/>
+            <Field label="E-mail" icon="mail" type="email" value={form.email} autoComplete="email"
+              hint={isAdmin?"Il sert à vous connecter.":"Il sert à vous connecter et à recevoir les notifications."}
+              onChange={v=>setForm(f=>({...f,email:v}))}/>
+            {avecTelephone&&<Field label="Téléphone" icon="phone" type="tel" value={form.telephone} autoComplete="tel"
+              onChange={v=>setForm(f=>({...f,telephone:v}))}/>}
+            {emailChange&&<Field label="Mot de passe actuel" icon="lock" type="password" value={mdpEmail}
+              autoComplete="current-password" hint="Obligatoire pour changer d'e-mail." onChange={setMdpEmail}/>}
+            <div style={{display:"flex",justifyContent:"flex-end"}}>
+              <Btn variant="dark" icon="check" type="submit" disabled={!infosModifiees||savingInfos}>
+                {savingInfos?"Enregistrement…":"Enregistrer"}
+              </Btn>
+            </div>
+          </form>
+        </Card>
+        <Card>
+          <SectionTitle icon="lock">Mot de passe</SectionTitle>
+          <form onSubmit={changerMdp} style={{display:"grid",gap:16}}>
+            <Field label="Mot de passe actuel" icon="lock" type={typeMdp} value={mdp.actuel} autoComplete="current-password"
+              onChange={v=>setMdp(m=>({...m,actuel:v}))}/>
+            <Field label={`Nouveau mot de passe (min. ${MDP_MIN} caractères)`} icon="lock" type={typeMdp} value={mdp.nouveau}
+              autoComplete="new-password" onChange={v=>setMdp(m=>({...m,nouveau:v}))}/>
+            <Field label="Confirmer le nouveau mot de passe" icon="lock" type={typeMdp} value={mdp.confirmer}
+              autoComplete="new-password" onChange={v=>setMdp(m=>({...m,confirmer:v}))}/>
+            <label style={{display:"flex",alignItems:"center",gap:9,fontSize:13.5,color:"var(--slate)",cursor:"pointer"}}>
+              <input type="checkbox" checked={afficher} onChange={e=>setAfficher(e.target.checked)}
+                style={{width:18,height:18,accentColor:"var(--jaune-deep)"}}/>
+              Afficher les mots de passe
+            </label>
+            <p style={{margin:0,fontSize:13,color:"var(--muted)",lineHeight:1.5}}>
+              Après le changement, vos autres appareils sont déconnectés.
+            </p>
+            <div style={{display:"flex",justifyContent:"flex-end"}}>
+              <Btn variant="dark" icon="check" type="submit"
+                disabled={savingMdp||!mdp.actuel||!mdp.nouveau||!mdp.confirmer}>
+                {savingMdp?"Modification…":"Changer le mot de passe"}
+              </Btn>
+            </div>
+          </form>
+        </Card>
+      </div>
+    </main>
+  </>);
+}
+
 export function ChangeCode({ onDone }) {
   const [code,setCode]=useState("");
   const [confirm,setConfirm]=useState("");
@@ -1772,11 +1925,13 @@ export function ChangeCode({ onDone }) {
 
   const submit = async e => {
     e.preventDefault();
-    if (code.length < 6) {setErr("Le code doit faire au moins 6 caractères.");return;}
-    if (code !== confirm) {setErr("Les deux codes ne correspondent pas.");return;}
+    if (code.trim().length < MDP_MIN) {setErr(`Le mot de passe doit faire au moins ${MDP_MIN} caractères.`);return;}
+    if (code !== confirm) {setErr("Les deux mots de passe ne correspondent pas.");return;}
     setLoading(true);setErr("");
     try {
-      await apiFetch('/api/auth/client/change-code',{method:'POST',body:{new_code:code}});
+      const r=await apiFetch('/api/auth/client/change-code',{method:'POST',body:{new_code:code}});
+      // Les sessions ouvertes sont coupées par le changement : celle-ci continue avec le nouveau jeton.
+      localStorage.setItem('fb_token',r.token);
       onDone();
     } catch(e){setErr(e.message);}
     finally{setLoading(false);}
@@ -1806,7 +1961,7 @@ export function ChangeCode({ onDone }) {
           <form onSubmit={submit} style={{display:"grid",gap:16}}>
             <label style={{display:"block"}}>
               <span style={{display:"block",fontSize:13.5,fontWeight:600,color:"var(--ink)",marginBottom:7}}>
-                Nouveau mot de passe (min. 6 caractères)
+                Nouveau mot de passe (min. {MDP_MIN} caractères)
               </span>
               <span style={{display:"flex",alignItems:"center",gap:10,padding:"0 14px",background:"#fff",
                 border:"1.5px solid var(--line-strong)",borderRadius:"var(--r-input)",height:50}}>

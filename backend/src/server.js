@@ -11,6 +11,9 @@ import { uploadRoot } from './middleware/upload.js';
 import authRouter from './routes/auth.js';
 import clientRouter from './routes/client/chantiers.js';
 import adminRouter from './routes/admin/index.js';
+import compteRouter from './routes/compte.js';
+import authClient from './middleware/authClient.js';
+import authAdmin from './middleware/authAdmin.js';
 
 const app = express();
 
@@ -77,22 +80,46 @@ const rlOpts = { standardHeaders: true, legacyHeaders: false, keyGenerator: (req
 // Limiteur global généreux (anti-abus / DoS applicatif léger).
 app.use('/api', rateLimit({ ...rlOpts, windowMs: 15 * 60 * 1000, max: 600 }));
 
-// Auth : strict, ne compte que les échecs.
+// Routes à limite propre : testées depuis le montage du routeur. Un montage sur le chemin complet
+// laisserait passer « /api/auth//forgot-password », que le routeur accepte.
+const estOubli = req => /^\/forgot-password\/?$/i.test(req.path);
+const estContact = req => /^\/contact\/?$/i.test(req.path);
+
+// Auth : strict, ne compte que les échecs. Le mot de passe oublié a son propre budget : ses demandes
+// ne doivent pas bloquer la connexion, ni l'inverse.
 const authLimiter = rateLimit({
   ...rlOpts, windowMs: 15 * 60 * 1000, max: 10, skipSuccessfulRequests: true,
+  skip: estOubli,
   message: { error: 'Trop de tentatives, réessayez dans 15 minutes.' },
+});
+
+// Mon compte : budget séparé de la connexion, et lectures non comptées. Un mauvais mot de passe
+// actuel compte comme un échec, mais les échecs de connexion d'une même box ne bloquent pas l'écran.
+const compteLimiter = rateLimit({
+  ...rlOpts, windowMs: 15 * 60 * 1000, max: 10, skipSuccessfulRequests: true,
+  skip: req => req.method === 'GET',
+  message: { error: 'Trop de tentatives, réessayez dans 15 minutes.' },
+});
+
+// Mot de passe oublié : envoi d'e-mails → limite serrée, demandes réussies comprises.
+const forgotLimiter = rateLimit({
+  ...rlOpts, windowMs: 60 * 60 * 1000, max: 5,
+  skip: req => !estOubli(req),
+  message: { error: 'Trop de demandes, réessayez plus tard.' },
 });
 
 // Contact : envoi d'e-mails → limite serrée contre le spam.
 const contactLimiter = rateLimit({
   ...rlOpts, windowMs: 60 * 60 * 1000, max: 5,
+  skip: req => !estContact(req),
   message: { error: 'Trop de messages envoyés, réessayez plus tard.' },
 });
 
 // ── Routes ────────────────────────────────────────────────────
-app.use('/api/auth', authLimiter, authRouter);
-app.use('/api/client/contact', contactLimiter);
-app.use('/api/client', clientRouter);
+app.use('/api/auth', forgotLimiter, authLimiter, authRouter);
+app.use('/api/client/compte', compteLimiter, authClient, compteRouter('client'));
+app.use('/api/admin/compte', compteLimiter, authAdmin, compteRouter('admin'));
+app.use('/api/client', contactLimiter, clientRouter);
 app.use('/api/admin', adminRouter);
 
 // ── 404 ───────────────────────────────────────────────────────
