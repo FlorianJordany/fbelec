@@ -1,0 +1,2 @@
+# Code et fichiers internes : lus par Node sur le disque, jamais servis par Apache.
+Require all denied

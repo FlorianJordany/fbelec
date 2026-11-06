@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { pool } from '../../db.js';
 import { sendNouvelleNote } from '../../services/mailer.js';
+import { destinatairesAbonnes } from '../../services/abonnes.js';
 
 const router = Router();
 
@@ -19,20 +20,23 @@ router.post('/chantiers/:id/notes', async (req, res, next) => {
     // Envoyer un email au client si la note est visible côté client
     if (visible_client !== false && visible_client !== 'false') {
       pool.query(
-        `SELECT c.nom AS chantier_nom, cl.nom AS client_nom, cl.email AS client_email
+        `SELECT c.nom AS chantier_nom, c.reference_client, c.client_id, cl.nom AS client_nom, cl.email AS client_email
          FROM fbelec.chantiers c JOIN fbelec.clients cl ON cl.id = c.client_id
          WHERE c.id = $1`, [req.params.id]
-      ).then(({ rows: [row] }) => {
-        if (row?.client_email) {
-          sendNouvelleNote({
-            nom: row.client_nom,
-            email: row.client_email,
-            chantierNom: row.chantier_nom,
-            texte,
-            chantierId: req.params.id,
-          }).catch(e => console.error('[mailer] note:', e.message));
+      ).then(async ({ rows: [row] }) => {
+        if (!row) return;
+        const commun = {
+          chantierNom: row.chantier_nom, referenceClient: row.reference_client,
+          texte, chantierId: req.params.id,
+        };
+        if (row.client_email) sendNouvelleNote({ nom: row.client_nom, email: row.client_email, ...commun })
+          .catch(e => console.error('[mailer] note:', e.message));
+        // Collègues abonnés à ce chantier (hors propriétaire, déjà prévenu).
+        for (const s of await destinatairesAbonnes(req.params.id, [row.client_id])) {
+          sendNouvelleNote({ nom: s.nom, email: s.email, ...commun, pourAbonne: true })
+            .catch(e => console.error('[mailer] note (abonné):', e.message));
         }
-      }).catch(() => {});
+      }).catch(e => console.error('[mailer] note:', e.message));
     }
   } catch (err) { next(err); }
 });

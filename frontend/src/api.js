@@ -2,6 +2,11 @@
 // L'URL de l'API est injectée au build par Vite (VITE_API_URL).
 export const API_BASE = import.meta.env.VITE_API_URL || '';
 
+// Longueur minimale d'un mot de passe (confort de saisie : la règle est appliquée par le backend).
+export const MDP_MIN = 6;
+
+export const NET_ERR = "Connexion au serveur impossible. Vérifiez votre réseau (wifi public, portail captif…) puis réessayez.";
+
 export function apiFetch(path, opts = {}) {
   const token = localStorage.getItem('fb_token');
   return fetch(API_BASE + path, {
@@ -13,9 +18,10 @@ export function apiFetch(path, opts = {}) {
     },
     body: opts.body instanceof FormData ? opts.body
           : opts.body ? JSON.stringify(opts.body) : undefined,
-  }).then(async r => {
+  }).catch(() => { throw new Error(NET_ERR); }).then(async r => {
     if (r.status === 401) { localStorage.removeItem('fb_token'); window.location.reload(); }
-    const data = await r.json();
+    // Réponse non-JSON : portail captif, page d'erreur de l'hébergeur ou limiteur global (texte brut).
+    const data = await r.json().catch(() => { throw new Error(r.status === 429 ? "Trop de tentatives, réessayez plus tard." : NET_ERR); });
     if (!r.ok) throw new Error(data.error || 'Erreur serveur');
     return data;
   });
@@ -115,6 +121,9 @@ export const CAT_LABELS = {
   mandat:            'Mandat',
 };
 export const CAT_REQUIRED = ['permis_construire','plan_situation'];
+
+// Libellé d'adresse d'un chantier localisé par point GPS (identique au backend, utils/validate.js).
+export const libelleGps = p => `Point GPS ${p.lat.toFixed(5)}, ${p.lng.toFixed(5)}`;
 
 export const DOC_OPTIONS = [
   ...Object.entries(CAT_LABELS).map(([k,v])=>({value:k,label:v})),

@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Btn } from './ui.jsx';
 import {
   Login, Dashboard, ChantierDetail, NouveauChantierClient,
-  EditChantierInfos, ChangeCode, GuideClient,
+  EditChantierInfos, ChangeCode, GuideClient, MonCompte,
 } from './client.jsx';
 import {
   AdminList, AdminNouveauChantier, AdminChantier,
@@ -60,6 +60,7 @@ export default function App() {
   const ia = role==='admin';
   if (view==="dashboard") return <Dashboard go={go} openChantier={openChantier} onLogout={onLogout} isAdmin={ia}/>;
   if (view==="guide") return <GuideClient go={go} onLogout={onLogout} isAdmin={ia}/>;
+  if (view==="mon-compte") return <MonCompte go={go} onLogout={onLogout} isAdmin={ia}/>;
   if (view==="nouveau-chantier") return <NouveauChantierClient go={go} onLogout={onLogout} isAdmin={ia}/>;
   if (view==="detail"&&cid) return <ChantierDetail chantierId={cid} go={go} onLogout={onLogout} isAdmin={ia}/>;
   if (view==="edit-chantier"&&cid) return <EditChantierInfos chantierId={cid} go={go} onLogout={onLogout} isAdmin={ia}/>;

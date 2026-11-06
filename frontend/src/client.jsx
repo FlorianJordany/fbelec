@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
-import { apiFetch, API_BASE, chantierBadge, downloadFile, downloadPdf, CAT_LABELS, CAT_REQUIRED, DOC_OPTIONS } from './api.js';
+import { apiFetch, API_BASE, MDP_MIN, NET_ERR, chantierBadge, downloadFile, downloadPdf, CAT_LABELS, CAT_REQUIRED, DOC_OPTIONS, libelleGps } from './api.js';
 import { Icon, Logo, Btn, StatusPill, Card, Field, SectionTitle, Toast, useToast, AppHeader,
-         AddressAutocomplete, Footer } from './ui.jsx';
+         AddressAutocomplete, CarteGps, GpsLinks, Footer } from './ui.jsx';
 
 // ═════════════════════════════════════════════════════════════
 //  ÉCRAN LOGIN
@@ -16,16 +16,31 @@ export function Login({ onLogin }) {
   const [forgotEmail,setForgotEmail]=useState("");
   const [forgotSent,setForgotSent]=useState(false);
   const [forgotLoading,setForgotLoading]=useState(false);
+  const [forgotErr,setForgotErr]=useState("");
+  // Ignore la réponse d'une demande abandonnée (Retour pendant l'envoi).
+  const forgotReq=useRef(0);
 
-  // Login direct sans apiFetch pour éviter le reload sur 401
+  // Login direct sans apiFetch pour éviter le reload sur 401.
+  // Erreurs typées pour afficher la vraie cause : e.network (serveur injoignable,
+  // wifi public/portail captif qui intercepte la requête) et e.status (401, 429…).
   const tryLogin = async (path, body) => {
-    const r = await fetch(API_BASE + path, {
-      method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body: JSON.stringify(body),
-    });
-    const data = await r.json();
-    if (!r.ok) throw new Error(data.error || 'Erreur');
+    let r;
+    try {
+      r = await fetch(API_BASE + path, {
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify(body),
+      });
+    } catch { const e=new Error(NET_ERR); e.network=true; throw e; }
+    let data;
+    try { data = await r.json(); }
+    catch {
+      // Réponse non-JSON : portail captif qui réécrit la page, ou limiteur global (texte brut)
+      const e = r.status===429 ? new Error("Trop de tentatives, réessayez plus tard.") : new Error(NET_ERR);
+      if (r.status!==429) e.network=true; else e.status=429;
+      throw e;
+    }
+    if (!r.ok) { const e=new Error(data.error||'Erreur'); e.status=r.status; throw e; }
     return data;
   };
 
@@ -34,38 +49,54 @@ export function Login({ onLogin }) {
     if (!email.trim()||!password.trim()){setErr("Merci de renseigner votre e-mail et votre mot de passe.");return;}
     setLoading(true);setErr("");
     try {
-      // Essai admin d'abord
+      // Essai client d'abord : chaque essai raté compte dans le limiteur de connexion, et les
+      // clients sont les plus nombreux à se connecter depuis une même box.
+      let data;
       try {
-        const data = await tryLogin('/api/auth/admin/login',{email,password});
-        localStorage.setItem('fb_token',data.token);
+        data = await tryLogin('/api/auth/client/login',{email,code_suivi:password});
+      } catch(clientErr) {
+        if (!clientErr.message.includes('Identifiants')) throw clientErr;
+        // Essai admin
+        const admin = await tryLogin('/api/auth/admin/login',{email,password});
+        localStorage.setItem('fb_token',admin.token);
         // Rechargement complet : repartir d'un état neuf (aucun cache en mémoire).
         window.location.reload();
         return;
-      } catch(adminErr) {
-        if (!adminErr.message.includes('Identifiants')) throw adminErr;
       }
-      // Essai client
-      const data = await tryLogin('/api/auth/client/login',{email,code_suivi:password});
       localStorage.setItem('fb_token',data.token);
       localStorage.setItem('fb_client',JSON.stringify(data.client));
       if (data.must_change_code) { onLogin(data.client, true); return; }
       window.location.reload();
-    } catch(e){setErr("Identifiants incorrects.");}
+    } catch(e){
+      if (e.network) setErr(e.message);
+      else if (e.status===429) setErr(e.message); // « Trop de tentatives, réessayez dans 15 minutes. »
+      else if (e.status===401) setErr("Identifiants incorrects.");
+      else setErr(e.message||"Erreur inattendue. Réessayez.");
+    }
     finally{setLoading(false);}
+  };
+
+  const ouvrirOubli = () => {
+    forgotReq.current++;
+    setForgotLoading(false);setForgotErr("");setForgotSent(false);
+    setForgotMode(true);setForgotEmail(email);
+  };
+
+  const fermerOubli = () => {
+    forgotReq.current++;
+    setForgotLoading(false);setForgotMode(false);
   };
 
   const submitForgot = async e => {
     e.preventDefault();
-    if (!forgotEmail.trim()){return;}
-    setForgotLoading(true);
+    if (!forgotEmail.trim()){setForgotErr("Merci de renseigner votre e-mail.");return;}
+    const req=++forgotReq.current;
+    setForgotLoading(true);setForgotErr("");
     try {
-      await fetch(API_BASE+'/api/auth/forgot-password',{
-        method:'POST',headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({email:forgotEmail.trim()})
-      });
-      setForgotSent(true);
-    } catch {}
-    finally{setForgotLoading(false);}
+      await apiFetch('/api/auth/forgot-password',{method:'POST',body:{email:forgotEmail.trim()}});
+      if (req===forgotReq.current) setForgotSent(true);
+    } catch(e){if (req===forgotReq.current) setForgotErr(e.message);}
+    finally{if (req===forgotReq.current) setForgotLoading(false);}
   };
 
   const aside = <div className="fb-login-aside" style={{position:"relative",background:"var(--noir)",
@@ -131,7 +162,7 @@ export function Login({ onLogin }) {
                 <Btn variant="primary" size="lg" full type="submit" iconR="chevR" loading={loading}>
                   Se connecter
                 </Btn>
-                <button type="button" onClick={()=>{setForgotMode(true);setForgotEmail(email);}}
+                <button type="button" onClick={ouvrirOubli}
                   style={{background:"none",border:"none",cursor:"pointer",color:"var(--slate)",
                     fontSize:13.5,textDecoration:"underline",padding:0,textAlign:"center"}}>
                   Mot de passe oublié ?
@@ -147,17 +178,17 @@ export function Login({ onLogin }) {
                       <Icon name="check" size={28}/>
                     </div>
                     <h2 style={{margin:"0 0 12px",fontFamily:"var(--font-head)",fontWeight:700,fontSize:22,color:"var(--ink)"}}>
-                      E-mail envoyé !
+                      Demande enregistrée
                     </h2>
                     <p style={{margin:"0 0 28px",fontSize:15,color:"var(--slate)",lineHeight:1.6}}>
-                      Si cet e-mail est lié à un compte, vous recevrez un mot de passe temporaire d'ici quelques instants.
+                      Si cet e-mail est lié à un compte client, un mot de passe temporaire valable 24 heures vous a été envoyé. Vérifiez vos courriers indésirables. Une seule demande est prise en compte toutes les 5 minutes. Votre mot de passe actuel reste valable jusqu'à ce que vous utilisiez le mot de passe temporaire. Compte FB ELEC : contactez votre administrateur.
                     </p>
-                    <Btn variant="primary" full onClick={()=>{setForgotMode(false);setForgotSent(false);}}>
+                    <Btn variant="primary" full onClick={fermerOubli}>
                       Retour à la connexion
                     </Btn>
                   </div>
                 : <form onSubmit={submitForgot}>
-                    <button type="button" onClick={()=>setForgotMode(false)}
+                    <button type="button" onClick={fermerOubli}
                       style={{display:"inline-flex",alignItems:"center",gap:7,background:"none",border:"none",
                         cursor:"pointer",color:"var(--slate)",fontSize:14,fontFamily:"var(--font-head)",
                         fontWeight:600,padding:0,marginBottom:28}}>
@@ -167,12 +198,18 @@ export function Login({ onLogin }) {
                       Mot de passe oublié
                     </h1>
                     <p style={{margin:"0 0 28px",fontSize:15,color:"var(--slate)",lineHeight:1.55}}>
-                      Entrez votre e-mail, vous recevrez un mot de passe temporaire.
+                      Entrez l'e-mail de votre compte client, vous recevrez un mot de passe temporaire. Compte FB ELEC : contactez votre administrateur.
                     </p>
                     <div style={{display:"grid",gap:18}}>
                       <Field label="E-mail" icon="mail" type="email" value={forgotEmail}
-                        onChange={v=>setForgotEmail(v)} placeholder="vous@exemple.fr"/>
+                        onChange={v=>{setForgotEmail(v);setForgotErr("");}} placeholder="vous@exemple.fr"/>
                     </div>
+                    {forgotErr&&<div style={{marginTop:16,display:"flex",gap:9,alignItems:"center",
+                      background:"color-mix(in srgb,var(--c-blocked) 8%,#fff)",
+                      border:"1px solid color-mix(in srgb,var(--c-blocked) 25%,transparent)",
+                      color:"var(--c-blocked-ink)",fontSize:14,padding:"10px 14px",borderRadius:"var(--r-input)"}}>
+                      <Icon name="alert" size={17}/>{forgotErr}
+                    </div>}
                     <div style={{marginTop:24}}>
                       <Btn variant="primary" size="lg" full type="submit" iconR="chevR" loading={forgotLoading}>
                         Envoyer le mot de passe temporaire
@@ -191,7 +228,7 @@ export function Login({ onLogin }) {
 // ═════════════════════════════════════════════════════════════
 //  CONTACT BLOCK
 // ═════════════════════════════════════════════════════════════
-function ContactBlock() {
+function ContactBlock({ chantierId, lectureSeule=false }) {
   const isMobile = /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent) || window.innerWidth < 768;
   const [showPhone,setShowPhone]=useState(false);
   const [showForm,setShowForm]=useState(false);
@@ -203,7 +240,8 @@ function ContactBlock() {
     if (!message.trim()) return;
     setSending(true);
     try {
-      await apiFetch('/api/client/contact',{method:'POST',body:{message}});
+      await apiFetch('/api/client/contact',{method:'POST',
+        body:chantierId?{message,chantier_id:chantierId}:{message}});
       setSent(true); setMessage("");
       setTimeout(()=>{setSent(false);setShowForm(false);},3500);
     } catch {}
@@ -231,9 +269,9 @@ function ContactBlock() {
               </div>
             : <Btn variant="primary" icon="phone" onClick={()=>setShowPhone(true)}>Appeler FB ELEC</Btn>
         }
-        <Btn variant="ghost" icon="mail" onClick={()=>setShowForm(f=>!f)}
+        {!lectureSeule&&<Btn variant="ghost" icon="mail" onClick={()=>setShowForm(f=>!f)}
           style={{color:"#fff",borderColor:"rgba(255,255,255,.3)",
-            background:showForm?"rgba(255,255,255,.1)":"transparent"}}>Écrire</Btn>
+            background:showForm?"rgba(255,255,255,.1)":"transparent"}}>Écrire</Btn>}
       </div>
     </div>
 
@@ -366,7 +404,7 @@ function ChantierCard({ c, onOpen }) {
   return <Card pad={0} hover onClick={onOpen} style={{overflow:"hidden",display:"flex",flexDirection:"column"}}>
     <div style={{position:"relative",height:150,background:"var(--bg-soft)",overflow:"hidden"}}>
       {c.photo_couverture
-        ?<img src={c.photo_couverture} alt="" className="fb-img" style={{width:"100%",height:"100%",objectFit:"cover"}}/>
+        ?<img src={c.photo_couverture_moyen||c.photo_couverture} alt="" className="fb-img" loading="lazy" decoding="async" style={{width:"100%",height:"100%",objectFit:"cover"}}/>
         :<div style={{width:"100%",height:"100%",display:"grid",placeItems:"center",color:"var(--muted)"}}><Icon name="camera" size={28}/></div>}
       <div style={{position:"absolute",top:12,left:12}}>
         <StatusPill kind={st.kind} size="sm">{st.label}</StatusPill>
@@ -379,12 +417,12 @@ function ChantierCard({ c, onOpen }) {
     </div>
     <div style={{padding:22,display:"flex",flexDirection:"column",gap:14,flex:1}}>
       <div>
-        <h3 style={{margin:"0 0 5px",fontFamily:"var(--font-head)",fontWeight:700,fontSize:19,color:"var(--ink)"}}>{c.nom}</h3>
+        <h3 style={{margin:"0 0 5px",fontFamily:"var(--font-head)",fontWeight:700,fontSize:19,color:"var(--ink)"}}>{c.reference_client||c.nom}</h3>
         <div style={{display:"flex",alignItems:"center",gap:6,color:"var(--slate)",fontSize:14}}>
           <Icon name="pin" size={15}/>{c.adresse}, {c.commune}
         </div>
         {c.proprietaire_nom&&<div style={{display:"flex",alignItems:"center",gap:6,color:"var(--muted)",fontSize:12.5,marginTop:4}}>
-          <Icon name="user" size={13}/>Créé par {c.proprietaire_nom}
+          <Icon name="user" size={13}/>Créé par {c.proprietaire_nom}{c.peut_modifier===false?' · consultation seule':''}
         </div>}
       </div>
       <div>
@@ -425,6 +463,7 @@ function ChantierCard({ c, onOpen }) {
 export function ChantierDetail({ chantierId, go, onLogout, isAdmin, backTo, apiBase }) {
   const [data,setData]=useState(null);
   const [loading,setLoading]=useState(true);
+  const [erreur,setErreur]=useState("");
   const [reloadKey,setReloadKey]=useState(0);
   const [toast,showToast]=useToast();
   const base = apiBase || '/api/client/chantiers';
@@ -434,14 +473,31 @@ export function ChantierDetail({ chantierId, go, onLogout, isAdmin, backTo, apiB
   const reload = () => setReloadKey(k=>k+1);
 
   useEffect(()=>{
-    if (reloadKey===0) setLoading(true);
-    apiFetch(`${base}/${chantierId}`).then(setData).catch(console.error).finally(()=>setLoading(false));
+    if (reloadKey===0) { setLoading(true); setErreur(""); }
+    apiFetch(`${base}/${chantierId}`).then(setData)
+      .catch(e=>{ console.error(e); if (reloadKey===0) setErreur(e.message||"Chantier introuvable."); })
+      .finally(()=>setLoading(false));
   },[chantierId,reloadKey]);
+
+  // Chantier inaccessible (ex. lien d'e-mail après retrait d'un abonnement) : message au lieu d'un chargement sans fin.
+  if (!loading&&!data&&erreur) return <div style={{minHeight:"100vh",background:"var(--bg-soft)",display:"flex",flexDirection:"column"}}>
+    <AppHeader go={go} admin={false} isAdmin={isAdmin} onLogout={onLogout}/>
+    <main className="fb-wrap" style={{paddingTop:40,paddingBottom:60}}>
+      <Card style={{textAlign:"center"}}>
+        <p style={{margin:"0 0 6px",fontFamily:"var(--font-head)",fontWeight:700,fontSize:18,color:"var(--ink)"}}>Chantier non disponible</p>
+        <p style={{margin:"0 0 18px",color:"var(--slate)",fontSize:14.5}}>Ce chantier n'existe plus ou n'est plus accessible avec votre compte.</p>
+        <Btn variant="dark" icon="arrowL" onClick={()=>go(retour)}>{retour==="admin-vue-client"?"Tous les chantiers":"Mes chantiers"}</Btn>
+      </Card>
+    </main>
+    <Footer/>
+  </div>;
 
   if (loading||!data) return <div style={{minHeight:"100vh",background:"var(--bg-soft)",display:"flex",flexDirection:"column"}}>
     <AppHeader go={go} admin={false} isAdmin={isAdmin} onLogout={onLogout}/><div className="fb-spinner"/></div>;
 
   const c=data;
+  // Chantier d'un collègue auquel ce compte est abonné (notifications) : consultation seule.
+  const lectureSeule=isClientView&&c.peut_modifier===false;
   const st=chantierBadge(c);
   const doneCount=c.etapes.filter(e=>e.etat==="done").length;
   const total=c.etapes.filter(e=>e.etat!=="na").length;
@@ -466,8 +522,12 @@ export function ChantierDetail({ chantierId, go, onLogout, isAdmin, backTo, apiB
               <StatusPill kind={st.kind}>{st.label}</StatusPill>
               <span style={{fontSize:13,color:"var(--muted)",fontFamily:"var(--font-mono)"}}>Dossier {c.reference}</span>
             </div>
+            {lectureSeule&&<div style={{display:"inline-flex",alignItems:"center",gap:7,marginBottom:12,padding:"6px 12px",
+              background:"var(--bg-soft)",border:"1px solid var(--line)",borderRadius:999,fontSize:13,color:"var(--slate)",fontWeight:600}}>
+              <Icon name="eye" size={15}/>Consultation seule{c.proprietaire_nom?` — chantier de ${c.proprietaire_nom}`:''}
+            </div>}
             <h1 style={{margin:"0 0 10px",fontFamily:"var(--font-display)",fontWeight:700,fontSize:34,
-              textTransform:"uppercase",color:"var(--ink)",letterSpacing:"-.01em",lineHeight:1.05}}>{c.nom}</h1>
+              textTransform:"uppercase",color:"var(--ink)",letterSpacing:"-.01em",lineHeight:1.05}}>{c.reference_client||c.nom}</h1>
             <div style={{display:"flex",flexDirection:"column",gap:6,color:"var(--slate)",fontSize:14.5}}>
               <span style={{display:"flex",alignItems:"center",gap:8}}><Icon name="pin" size={16}/>{c.adresse}, {c.commune}</span>
               {c.type_prestation&&<span style={{display:"flex",alignItems:"center",gap:8}}><Icon name="bolt" size={16}/>{c.type_prestation}</span>}
@@ -488,7 +548,7 @@ export function ChantierDetail({ chantierId, go, onLogout, isAdmin, backTo, apiB
           </div>
           <div style={{position:"relative",background:"var(--noir)",padding:28,color:"#fff",
             display:"flex",flexDirection:"column",justifyContent:"flex-end",minHeight:240}}>
-            {c.photos[0]&&<img src={c.photos[0].url} alt="" className="fb-img"
+            {c.photos[0]&&<img src={c.photos[0].url_moyen||c.photos[0].url} alt="" className="fb-img"
               style={{position:"absolute",inset:0,width:"100%",height:"100%",objectFit:"cover",opacity:.35}}/>}
             <div style={{position:"absolute",inset:0,background:"linear-gradient(180deg,rgba(15,15,15,.3),rgba(15,15,15,.82))"}}/>
             <div style={{position:"relative"}}>
@@ -537,22 +597,23 @@ export function ChantierDetail({ chantierId, go, onLogout, isAdmin, backTo, apiB
         </Card>}
       </div>
       <div style={{display:"grid",gap:24,position:"sticky",top:84}}>
-        <ContactBlock/>
+        <ContactBlock chantierId={chantierId} lectureSeule={lectureSeule}/>
         {/* Informations administratives */}
         {(c.adresse_facturation||c.puissance_demandee||c.date_debut_chantier||c.duree_chantier)&&
           !isAdmin&&<Card pad={0} style={{overflow:"hidden"}}>
           <div style={{padding:"16px 20px 12px",display:"flex",alignItems:"center",justifyContent:"space-between",gap:8}}>
             <SectionTitle icon="info" style={{margin:0}}>Informations du dossier</SectionTitle>
-            <button onClick={()=>go("edit-chantier")}
+            {!lectureSeule&&<button onClick={()=>go("edit-chantier")}
               style={{display:"inline-flex",alignItems:"center",gap:6,padding:"7px 13px",
                 border:"1px solid var(--line)",borderRadius:"var(--r-input)",background:"#fff",
                 cursor:"pointer",fontSize:13,fontFamily:"var(--font-head)",fontWeight:600,color:"var(--slate)"}}>
               <Icon name="settings" size={15}/>Modifier
-            </button>
+            </button>}
           </div>
           <div style={{padding:"0 20px 18px",display:"grid",gap:10}}>
             {[
               ["Référence",c.reference_client],
+              ["Localisation GPS",c.gps_lat!=null&&c.gps_lng!=null?<GpsLinks lat={c.gps_lat} lng={c.gps_lng}/>:null],
               ["Adresse facturation",c.adresse_facturation],
               ["Référence facturation",c.reference_facturation],
               ["Téléphone facturation",c.facturation_telephone],
@@ -568,14 +629,16 @@ export function ChantierDetail({ chantierId, go, onLogout, isAdmin, backTo, apiB
             </div>)}
           </div>
         </Card>}
+        {isClientView&&c.abonnes_gestion&&<NotificationsChantier key={chantierId} chantierId={chantierId}
+          membres={c.abonnes_gestion} reload={reload} showToast={showToast}/>}
         {c.notes.length>0&&<Card>
-          <SectionTitle icon="mail">Informations FB ELEC</SectionTitle>
+          <SectionTitle icon="mail">Messages</SectionTitle>
           <Notes notes={c.notes}/>
         </Card>}
         {isClientView||backTo==='admin-vue-client'
           ? <>
-              <ClientDocumentsSection chantierId={chantierId} docs={c.documents} reload={reload} showToast={showToast} readonly={!isClientView}/>
-              <ClientPhotosSection chantierId={chantierId} photos={c.photos} reload={reload} showToast={showToast} readonly={!isClientView}/>
+              <ClientDocumentsSection chantierId={chantierId} docs={c.documents} reload={reload} showToast={showToast} readonly={!isClientView||lectureSeule}/>
+              <ClientPhotosSection chantierId={chantierId} photos={c.photos} reload={reload} showToast={showToast} readonly={!isClientView||lectureSeule}/>
             </>
           : c.documents.length>0&&<Card>
               <SectionTitle icon="file">Documents</SectionTitle>
@@ -644,7 +707,7 @@ function Timeline({ etapes, photos=[] }) {
             {stepPhotos.map((p,pi)=><div key={p.id} onClick={()=>setLightbox({photos:stepPhotos,idx:pi})}
               style={{width:72,height:72,borderRadius:8,overflow:"hidden",border:"1.5px solid var(--line-strong)",
                 cursor:"pointer",flex:"0 0 auto",background:"var(--bg-soft)"}}>
-              <img src={p.url} alt={p.legende||""} className="fb-img"
+              <img src={p.url_moyen||p.url} alt={p.legende||""} className="fb-img" loading="lazy" decoding="async"
                 style={{width:"100%",height:"100%",objectFit:"cover"}}/>
             </div>)}
           </div>}
@@ -654,7 +717,7 @@ function Timeline({ etapes, photos=[] }) {
     {lightbox&&<div onClick={()=>setLightbox(null)} style={{position:"fixed",inset:0,zIndex:200,
       background:"rgba(10,10,10,.92)",display:"grid",placeItems:"center",padding:24}}>
       <div onClick={e=>e.stopPropagation()} style={{maxWidth:760,width:"100%",position:"relative"}}>
-        <img src={lightbox.photos[lightbox.idx].url} alt="" className="fb-img"
+        <img src={lightbox.photos[lightbox.idx].url_grand||lightbox.photos[lightbox.idx].url} alt="" className="fb-img"
           style={{width:"100%",maxHeight:"75vh",objectFit:"contain",borderRadius:10,background:"#000"}}/>
         {lightbox.photos[lightbox.idx].legende&&<div style={{textAlign:"center",marginTop:12,
           color:"rgba(255,255,255,.8)",fontSize:14}}>{lightbox.photos[lightbox.idx].legende}</div>}
@@ -691,9 +754,9 @@ function Gallery({ photos }) {
         <span style={{fontFamily:"var(--font-head)",fontWeight:700,fontSize:14.5}}>Avant / après</span>
       </div>
       <div style={{position:"relative",height:280,borderRadius:"var(--r-card)",overflow:"hidden",border:"1px solid var(--line)",userSelect:"none"}}>
-        <img src={avant.url} alt="avant" className="fb-img" style={{position:"absolute",inset:0,width:"100%",height:"100%",objectFit:"cover"}}/>
+        <img src={avant.url_moyen||avant.url} alt="avant" className="fb-img" style={{position:"absolute",inset:0,width:"100%",height:"100%",objectFit:"cover"}}/>
         <div style={{position:"absolute",inset:0,width:reveal+"%",overflow:"hidden"}}>
-          <img src={apres.url} alt="après" className="fb-img" style={{position:"absolute",inset:0,width:(10000/reveal)+"%",maxWidth:"none",height:"100%",objectFit:"cover"}}/>
+          <img src={apres.url_moyen||apres.url} alt="après" className="fb-img" style={{position:"absolute",inset:0,width:(10000/reveal)+"%",maxWidth:"none",height:"100%",objectFit:"cover"}}/>
         </div>
         <div style={{position:"absolute",top:0,bottom:0,left:reveal+"%",width:3,background:"var(--jaune)",transform:"translateX(-50%)"}}>
           <div style={{position:"absolute",top:"50%",left:"50%",transform:"translate(-50%,-50%)",
@@ -711,7 +774,7 @@ function Gallery({ photos }) {
       {photos.map((p,i)=><div key={p.id} onClick={()=>setOpen(i)}
         style={{cursor:"pointer",borderRadius:"var(--r-input)",overflow:"hidden",border:"1px solid var(--line)",background:"#fff"}}>
         <div style={{position:"relative",height:130,background:"var(--bg-soft)"}}>
-          <img src={p.url} alt="" className="fb-img" style={{width:"100%",height:"100%",objectFit:"cover"}}/>
+          <img src={p.url_moyen||p.url} alt="" className="fb-img" loading="lazy" decoding="async" style={{width:"100%",height:"100%",objectFit:"cover"}}/>
           <span style={{position:"absolute",top:8,left:8,background:"var(--jaune)",color:"#1a1a1a",
             fontSize:11,fontWeight:700,padding:"3px 8px",borderRadius:999,display:"flex",alignItems:"center",gap:4}}>
             <Icon name="bolt" size={11}/>FB ELEC</span>
@@ -730,7 +793,7 @@ function Gallery({ photos }) {
       background:"rgba(10,10,10,.9)",display:"grid",placeItems:"center",padding:24}}>
       <div onClick={e=>e.stopPropagation()} style={{maxWidth:760,width:"100%"}}>
         <div style={{position:"relative"}}>
-          <img src={photos[open].url} alt="" className="fb-img"
+          <img src={photos[open].url_grand||photos[open].url} alt="" className="fb-img"
             style={{width:"100%",maxHeight:"72vh",objectFit:"contain",borderRadius:10,background:"#000"}}/>
           <button onClick={()=>setOpen(null)} style={{position:"absolute",top:-14,right:-14,width:40,height:40,
             borderRadius:999,background:"#fff",border:"none",cursor:"pointer",display:"grid",placeItems:"center"}}>
@@ -787,12 +850,70 @@ function Documents({ documents, showStatut=false }) {
   </div>;
 }
 
-// ── Notes ─────────────────────────────────────────────────────
-function Notes({ notes }) {
+// ── Notifications du chantier (créateur, admin de la société, FB ELEC) ──
+// Collègues abonnés : reçoivent les e-mails du chantier et peuvent le consulter (lecture seule).
+// admin : fiche FB ELEC (route admin) ; sansSociete : client rattaché à aucune société.
+export function NotificationsChantier({ chantierId, membres, reload, showToast, admin=false, sansSociete=false }) {
+  const initial=membres.filter(m=>m.abonne&&!m.proprietaire).map(m=>m.id);
+  const [choix,setChoix]=useState(initial);
+  const [saving,setSaving]=useState(false);
+  // Resynchronise avec le serveur après chaque rechargement de la fiche.
+  const cleServeur=[...initial].sort((a,b)=>a-b).join(',');
+  useEffect(()=>{ setChoix(initial); },[cleServeur]); // eslint-disable-line react-hooks/exhaustive-deps
+  const autres=membres.filter(m=>!m.proprietaire);
+  const modifie=choix.length!==initial.length||choix.some(id=>!initial.includes(id));
+  const basculer=id=>setChoix(c=>c.includes(id)?c.filter(x=>x!==id):[...c,id]);
+  const enregistrer=async()=>{
+    setSaving(true);
+    try {
+      await apiFetch(`/api/${admin?'admin':'client'}/chantiers/${chantierId}/abonnes`,{method:'PUT',body:{client_ids:choix}});
+      showToast('Destinataires des notifications enregistrés ✓'); reload();
+    } catch(e){ showToast(e.message,'error'); }
+    finally{ setSaving(false); }
+  };
+  return <Card>
+    <SectionTitle icon="mail">Notifications du chantier</SectionTitle>
+    <p style={{margin:'0 0 12px',fontSize:13.5,color:'var(--slate)',lineHeight:1.5}}>
+      {admin?'Collègues du client (même société)':'Collègues'} qui reçoivent les e-mails de ce chantier (étapes, messages) et peuvent le consulter.
+    </p>
+    <div style={{display:'grid',gap:8}}>
+      {membres.map(m=><label key={m.id} style={{display:'flex',alignItems:'center',gap:10,padding:'9px 12px',minWidth:0,
+        border:'1px solid var(--line)',borderRadius:'var(--r-input)',
+        background:m.proprietaire?'var(--bg-soft)':'#fff',cursor:m.proprietaire?'default':'pointer'}}>
+        <input type="checkbox" checked={m.proprietaire||choix.includes(m.id)} disabled={m.proprietaire}
+          onChange={()=>basculer(m.id)} style={{width:18,height:18,flex:'0 0 auto',accentColor:'var(--jaune-deep)'}}/>
+        <span style={{flex:1,minWidth:0}}>
+          <span style={{display:'block',fontWeight:600,fontSize:14,color:'var(--ink)',overflowWrap:'anywhere'}}>{m.nom}</span>
+          <span style={{display:'block',fontSize:12.5,color:'var(--muted)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
+            {m.proprietaire?(admin?'Client du chantier':'Créateur du chantier')+' — toujours notifié':m.email}
+          </span>
+        </span>
+      </label>)}
+    </div>
+    {autres.length===0
+      ? <p style={{margin:membres.length?'10px 0 0':0,fontSize:13,color:'var(--muted)'}}>
+          {sansSociete?"Ce client n'est rattaché à aucune société : rattachez-le à une société (page Clients) pour notifier ses collègues."
+            :admin?'Aucun autre membre actif dans la société du client.':'Aucun autre membre actif dans votre société.'}
+        </p>
+      : <div style={{marginTop:12,display:'flex',justifyContent:'flex-end'}}>
+          <Btn variant="dark" size="sm" icon="check" disabled={!modifie||saving} onClick={enregistrer}>
+            {saving?'Enregistrement…':'Enregistrer'}
+          </Btn>
+        </div>}
+  </Card>;
+}
+
+// ── Notes (fil de messages — partagé avec la fiche admin) ────
+export function Notes({ notes }) {
   return <div style={{display:"grid",gap:14}}>
-    {notes.map(n=><div key={n.id} style={{display:"flex",gap:12}}>
-      <div style={{width:38,height:38,borderRadius:999,background:"var(--jaune)",color:"#1a1a1a",
-        display:"grid",placeItems:"center",flex:"0 0 auto",fontFamily:"var(--font-head)",fontWeight:700}}>FB</div>
+    {notes.map(n=>{
+      const deClient=!!n.de_client;
+      const initiales=deClient
+        ?(n.auteur||"C").split(/\s+/).map(w=>w[0]).join("").slice(0,2).toUpperCase()
+        :"FB";
+      return <div key={n.id} style={{display:"flex",gap:12}}>
+      <div style={{width:38,height:38,borderRadius:999,background:deClient?"var(--line-strong)":"var(--jaune)",color:"#1a1a1a",
+        display:"grid",placeItems:"center",flex:"0 0 auto",fontFamily:"var(--font-head)",fontWeight:700,fontSize:deClient?13:undefined}}>{initiales}</div>
       <div style={{flex:1,background:"var(--bg-soft)",borderRadius:"var(--r-input)",padding:"13px 16px",borderTopLeftRadius:4}}>
         <div style={{display:"flex",justifyContent:"space-between",gap:8,marginBottom:5,flexWrap:"wrap"}}>
           <span style={{fontFamily:"var(--font-head)",fontWeight:700,fontSize:13.5,color:"var(--ink)"}}>{n.auteur}</span>
@@ -800,7 +921,7 @@ function Notes({ notes }) {
         </div>
         <p style={{margin:0,fontSize:14.5,color:"var(--ink)",lineHeight:1.55}}>{n.texte}</p>
       </div>
-    </div>)}
+    </div>;})}
   </div>;
 }
 
@@ -981,7 +1102,7 @@ function ClientPhotosSection({ chantierId, photos, reload, showToast, readonly=f
     {photos.length>0&&<div style={{display:"grid",gap:10}}>
       {photos.map((p,i)=><div key={p.id} style={{display:"flex",gap:12,alignItems:"center",
         padding:10,border:"1px solid var(--line)",borderRadius:"var(--r-input)",background:"#fff"}}>
-        <img src={p.url} alt="" className="fb-img" onClick={()=>setOpen(i)}
+        <img src={p.url_mini||p.url} alt="" className="fb-img" loading="lazy" decoding="async" onClick={()=>setOpen(i)}
           style={{width:56,height:56,borderRadius:8,objectFit:"cover",flex:"0 0 auto",cursor:"pointer"}}/>
         <div style={{flex:1,minWidth:0,fontSize:13,color:"var(--muted)"}}>
           {p.legende||p.etape_label||"Sans légende"}
@@ -1000,7 +1121,7 @@ function ClientPhotosSection({ chantierId, photos, reload, showToast, readonly=f
     </div>}
     {open!==null&&<div onClick={()=>setOpen(null)} style={{position:"fixed",inset:0,zIndex:400,
       background:"rgba(0,0,0,.88)",display:"grid",placeItems:"center",padding:20}}>
-      <img src={photos[open].url} alt="" className="fb-img"
+      <img src={photos[open].url_grand||photos[open].url} alt="" className="fb-img"
         style={{maxWidth:"90vw",maxHeight:"85vh",borderRadius:12,objectFit:"contain"}}/>
     </div>}
   </Card>;
@@ -1156,6 +1277,10 @@ export function NouveauChantierClient({ go, onLogout, isAdmin }) {
   const [dureeUnite,setDureeUnite]=useState('semaines');
   const [docs,setDocs]=useState({permis_construire:null,plan_situation:null,plan_masse:null,mandat:null});
   const [photos,setPhotos]=useState([]);
+  const [commentaire,setCommentaire]=useState('');
+  const [gps,setGps]=useState(null);
+  const [centreCarte,setCentreCarte]=useState(null);
+  const [factForcee,setFactForcee]=useState(false);
   const [loading,setLoading]=useState(false);
   const [err,setErr]=useState('');
   const [step,setStep]=useState(1);
@@ -1165,13 +1290,22 @@ export function NouveauChantierClient({ go, onLogout, isAdmin }) {
   const addPhotos=e=>setPhotos(p=>[...p,...Array.from(e.target.files)]);
   const removePhoto=i=>setPhotos(p=>p.filter((_,j)=>j!==i));
 
+  // Adresse OU point sur la carte, au moins l'un des deux ; les deux sont enregistrés s'ils sont
+  // donnés. Point sans adresse : la facturation doit être une vraie adresse postale.
+  const sansAdresse=!form.adresse.trim();
+  const factImpossible=sansAdresse&&!!gps;
+  useEffect(()=>{
+    if (factImpossible&&factType==='identique') { setFactType('differente'); setFactForcee(true); if(!factReference) setFactReference(form.reference_client); }
+    else if (!sansAdresse&&factForcee) { setFactType('identique'); setFactForcee(false); }
+  },[factImpossible,sansAdresse]); // eslint-disable-line react-hooks/exhaustive-deps
+  const adresseChantier = form.adresse.trim() || (gps?libelleGps(gps):'');
   const adresseFact = factType==='identique'
     ? [form.adresse,form.code_postal,form.commune].filter(Boolean).join(', ')
     : [factAdresse,factCp,factCommune].filter(Boolean).join(', ');
   const dureeFinal = dureeMontant ? `${dureeMontant} ${dureeUnite}` : '';
-  const canStep2 = form.adresse&&form.commune&&form.puissance_demandee&&form.puissance_type
+  const canStep2 = adresseChantier&&form.commune&&form.puissance_demandee&&form.puissance_type
     &&form.date_debut_chantier&&dureeMontant&&form.terrain_viabilise&&form.reference_client.trim()
-    &&(factType==='identique'||(factAdresse&&factCommune&&factReference.trim()));
+    &&(factType==='identique'?!sansAdresse:(factAdresse&&factCommune&&factReference.trim()));
   const canSubmit=CAT_REQUIRED.every(k=>docs[k]);
 
   async function submit() {
@@ -1183,7 +1317,11 @@ export function NouveauChantierClient({ go, onLogout, isAdmin }) {
         terrain_viabilise: form.terrain_viabilise==='oui',
         reference_facturation: factType==='differente'?factReference:'',
         facturation_telephone: factType==='differente'?factTelephone:'',
-        facturation_email: factType==='differente'?factEmail:''
+        facturation_email: factType==='differente'?factEmail:'',
+        mandat_fourni: !!docs.mandat,
+        commentaire: commentaire.trim(),
+        adresse: form.adresse.trim(),
+        gps_lat: gps?gps.lat:null, gps_lng: gps?gps.lng:null
       }});
       // Upload docs
       for (const [cat,file] of Object.entries(docs)) {
@@ -1254,12 +1392,22 @@ export function NouveauChantierClient({ go, onLogout, isAdmin }) {
               placeholder="Société ou nom du client"/>
           </div>
           <div>
-            <label style={labelSt}>Adresse du chantier *</label>
+            <label style={labelSt}>Adresse du chantier {gps?<span style={{color:'var(--muted)',fontWeight:400}}>(facultatif)</span>:'*'}</label>
             <AddressAutocomplete value={form.adresse}
-              onChange={v=>setForm(f=>({...f,adresse:v}))}
-              onSelect={a=>setForm(f=>({...f,adresse:a.adresse,
-                code_postal:a.code_postal||f.code_postal, commune:a.commune||f.commune}))}
+              onChange={v=>{ setForm(f=>({...f,adresse:v})); setCentreCarte(null); }}
+              onSelect={a=>{ setForm(f=>({...f,adresse:a.adresse,
+                code_postal:a.code_postal||f.code_postal, commune:a.commune||f.commune}));
+                if(a.position) setCentreCarte(a.position); }}
               inputStyle={inputSt} placeholder="ex. 12 rue des Acacias…"/>
+            <div style={{marginTop:5,fontSize:12.5,color:'var(--muted)'}}>
+              Pas encore d'adresse ? Laissez ce champ vide et placez un point sur la carte.
+            </div>
+          </div>
+          <div>
+            <label style={labelSt}>Emplacement sur la carte {sansAdresse?'*':<span style={{color:'var(--muted)',fontWeight:400}}>(facultatif)</span>}</label>
+            {/* Commune et code postal déduits du point seulement sans adresse : l'adresse fait foi. */}
+            <CarteGps value={gps} onChange={setGps} centre={centreCarte} commune={form.commune} codePostal={form.code_postal}
+              onLocalite={l=>setForm(f=>f.adresse.trim()?f:({...f,commune:l.commune||f.commune,code_postal:l.code_postal}))}/>
           </div>
           <div className="fb-form2" style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:14}}>
             <div>
@@ -1282,11 +1430,14 @@ export function NouveauChantierClient({ go, onLogout, isAdmin }) {
           <div>
             <label style={labelSt}>Adresse de facturation *</label>
             <select style={inputSt} value={factType}
-              onChange={e=>{ const v=e.target.value; setFactType(v);
+              onChange={e=>{ const v=e.target.value; setFactType(v); setFactForcee(false);
                 if(v==='differente'&&!factReference)setFactReference(form.reference_client); }}>
-              <option value="identique">Identique à l'adresse du chantier</option>
+              <option value="identique" disabled={factImpossible}>Identique à l'adresse du chantier</option>
               <option value="differente">Différente</option>
             </select>
+            {factImpossible&&<div style={{marginTop:5,fontSize:12.5,color:'var(--muted)'}}>
+              Chantier sans adresse : indiquez une adresse postale de facturation.
+            </div>}
           </div>
           {factType==='differente'&&<>
             <div>
@@ -1395,7 +1546,9 @@ export function NouveauChantierClient({ go, onLogout, isAdmin }) {
                   {lbl}{req&&<span style={{color:'var(--c-blocked)',marginLeft:4}}>*</span>}
                 </div>
                 <div style={{fontSize:12.5,color:'var(--muted)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
-                  {file?file.name:'Aucun fichier sélectionné'}
+                  {file?file.name
+                    :cat==='mandat'?'Généré automatiquement si absent'
+                    :'Aucun fichier sélectionné'}
                 </div>
               </div>
               <label style={{cursor:'pointer',padding:'8px 14px',border:'1px solid var(--line)',borderRadius:'var(--r-input)',
@@ -1425,6 +1578,12 @@ export function NouveauChantierClient({ go, onLogout, isAdmin }) {
             <input type="file" style={{display:'none'}} accept="image/*" multiple onChange={addPhotos}/>
           </label>
         </div>
+        <div style={{marginTop:18,borderTop:'1px solid var(--line)',paddingTop:18}}>
+          <label style={labelSt}>Commentaire (optionnel)</label>
+          <textarea value={commentaire} onChange={e=>setCommentaire(e.target.value)} rows={3}
+            placeholder="Informations que vous jugez importantes pour votre chantier…"
+            style={{...inputSt,resize:'vertical',lineHeight:1.5,fontSize:14.5}}/>
+        </div>
         {err&&<p style={{margin:'14px 0 0',color:'var(--c-blocked)',fontSize:14}}>{err}</p>}
         <div style={{marginTop:22,display:'flex',gap:12,justifyContent:'flex-end'}}>
           <Btn variant="ghost" onClick={()=>setStep(1)}>Retour</Btn>
@@ -1439,7 +1598,8 @@ export function NouveauChantierClient({ go, onLogout, isAdmin }) {
         <SectionTitle icon="check">Récapitulatif</SectionTitle>
         <div style={{display:'grid',gap:10,marginBottom:20}}>
           {[
-            ['Adresse',`${form.adresse}, ${form.commune}${form.code_postal?' '+form.code_postal:''}`],
+            ['Adresse',`${adresseChantier}, ${form.commune}${form.code_postal?' '+form.code_postal:''}`],
+            ...(gps&&!sansAdresse?[['Point GPS',`${gps.lat.toFixed(5)}, ${gps.lng.toFixed(5)}`]]:[]),
             ['Adresse facturation',adresseFact],
             ['Puissance',`${form.puissance_demandee} kVA — ${form.puissance_type==='monophase'?'Monophasé':'Triphasé'}`],
             ['Terrain viabilisé',form.terrain_viabilise==='oui'?'Oui':'Non'],
@@ -1467,8 +1627,13 @@ export function NouveauChantierClient({ go, onLogout, isAdmin }) {
             <span style={{fontSize:14,color:'var(--ink)'}}>{photos.length} photo(s)</span>
           </div>}
         </div>
-        {/* Mandat EDF prérempli */}
-        <div style={{borderTop:'1px solid var(--line)',paddingTop:16,marginBottom:16}}>
+        {commentaire.trim()&&<div style={{borderTop:'1px solid var(--line)',paddingTop:16,marginBottom:8}}>
+          <div style={{fontSize:13,color:'var(--muted)',fontFamily:'var(--font-head)',fontWeight:700,
+            textTransform:'uppercase',letterSpacing:'.05em',marginBottom:8}}>Commentaire</div>
+          <p style={{margin:0,fontSize:14.5,color:'var(--ink)',lineHeight:1.55,whiteSpace:'pre-wrap'}}>{commentaire.trim()}</p>
+        </div>}
+        {/* Mandat EDF prérempli — masqué si un mandat a été fourni à l'étape Documents */}
+        {!docs.mandat&&<div style={{borderTop:'1px solid var(--line)',paddingTop:16,marginBottom:16}}>
           <div style={{display:'flex',alignItems:'center',gap:12,flexWrap:'wrap'}}>
             <div style={{flex:1,minWidth:220}}>
               <div style={{fontFamily:'var(--font-head)',fontWeight:700,fontSize:14.5,color:'var(--ink)'}}>Mandat EDF</div>
@@ -1481,14 +1646,14 @@ export function NouveauChantierClient({ go, onLogout, isAdmin }) {
               try {
                 await downloadPdf('/api/client/mandat',{
                   reference: form.reference_client,
-                  adresse: [form.adresse, form.code_postal, form.commune].filter(Boolean).join(', '),
+                  adresse: [adresseChantier, form.code_postal, form.commune].filter(Boolean).join(', '),
                   ville: form.commune,
                 }, `Mandat-EDF-${(form.reference_client||'chantier').replace(/[^\w-]+/g,'_')}.pdf`);
               } catch(e){ setErr(e.message); }
               finally{ setMandatLoading(false); }
             }}>Télécharger le mandat (PDF)</Btn>
           </div>
-        </div>
+        </div>}
         <p style={{fontSize:14,color:'var(--slate)',margin:'14px 0 18px',lineHeight:1.55}}>
           En validant, votre demande sera transmise à l'équipe FB ELEC qui vous contactera sous 48h.
         </p>
@@ -1617,6 +1782,140 @@ export function EditChantierInfos({ chantierId, go, onLogout, isAdmin }) {
 // ═════════════════════════════════════════════════════════════
 //  ÉCRAN CHANGEMENT DE CODE (premier login client)
 // ═════════════════════════════════════════════════════════════
+// ═════════════════════════════════════════════════════════════
+//  MON COMPTE (client et FB ELEC)
+// ═════════════════════════════════════════════════════════════
+export function MonCompte({ go, onLogout, isAdmin }) {
+  const base=isAdmin?'/api/admin/compte':'/api/client/compte';
+  const retour=isAdmin?'admin-list':'dashboard';
+  const [toast,showToast]=useToast();
+  const [compte,setCompte]=useState(null); // valeurs enregistrées
+  const [erreur,setErreur]=useState("");
+  const [form,setForm]=useState({nom:"",email:"",telephone:""});
+  const [mdpEmail,setMdpEmail]=useState("");
+  const [savingInfos,setSavingInfos]=useState(false);
+  const [mdp,setMdp]=useState({actuel:"",nouveau:"",confirmer:""});
+  const [afficher,setAfficher]=useState(false);
+  const [savingMdp,setSavingMdp]=useState(false);
+
+  const charger=c=>{ setCompte(c); setForm({nom:c.nom||"",email:c.email||"",telephone:c.telephone||""}); };
+  useEffect(()=>{
+    apiFetch(base).then(charger).catch(e=>setErreur(e.message));
+  },[base]);
+
+  const page=contenu=><div style={{minHeight:"100vh",background:"var(--bg-soft)",display:"flex",flexDirection:"column"}}>
+    <AppHeader go={go} admin={isAdmin} isAdmin={isAdmin} onLogout={onLogout}/>
+    {contenu}
+    <Footer/>
+    <Toast message={toast.msg} type={toast.type}/>
+  </div>;
+
+  if (erreur) return page(<main className="fb-wrap" style={{flex:1,paddingTop:40,paddingBottom:60}}>
+    <Card style={{textAlign:"center"}}>
+      <p style={{margin:"0 0 18px",color:"var(--slate)",fontSize:14.5}}>{erreur}</p>
+      <Btn variant="dark" icon="arrowL" onClick={()=>go(retour)}>Retour</Btn>
+    </Card>
+  </main>);
+  if (!compte) return page(<div style={{flex:1}}><div className="fb-spinner"/></div>);
+
+  const avecTelephone='telephone' in compte;
+  const emailChange=form.email.trim().toLowerCase()!==compte.email;
+  const infosModifiees=form.nom!==(compte.nom||"")||emailChange||(avecTelephone&&form.telephone!==(compte.telephone||""));
+
+  const enregistrerInfos=async e=>{
+    e.preventDefault();
+    if (!form.nom.trim()) { showToast("Le nom est obligatoire.","error"); return; }
+    if (emailChange&&!mdpEmail) { showToast("Saisissez votre mot de passe actuel pour changer d'e-mail.","error"); return; }
+    setSavingInfos(true);
+    try {
+      const body={nom:form.nom,email:form.email};
+      if (avecTelephone) body.telephone=form.telephone;
+      if (emailChange) body.mot_de_passe_actuel=mdpEmail;
+      charger(await apiFetch(base,{method:'PUT',body}));
+      setMdpEmail("");
+      showToast(emailChange?"Enregistré. Connectez-vous désormais avec votre nouvel e-mail ✓":"Informations enregistrées ✓");
+    } catch(e){ showToast(e.message,"error"); }
+    finally{ setSavingInfos(false); }
+  };
+
+  const changerMdp=async e=>{
+    e.preventDefault();
+    if (mdp.nouveau.trim().length<MDP_MIN) { showToast(`Le mot de passe doit faire au moins ${MDP_MIN} caractères.`,"error"); return; }
+    if (mdp.nouveau!==mdp.confirmer) { showToast("Les deux mots de passe ne correspondent pas.","error"); return; }
+    setSavingMdp(true);
+    try {
+      const r=await apiFetch(`${base}/mot-de-passe`,{method:'PUT',body:{actuel:mdp.actuel,nouveau:mdp.nouveau}});
+      // Les sessions ouvertes sont coupées par le changement : celle-ci continue avec le nouveau jeton
+      // (sauf si l'utilisateur s'est déconnecté pendant l'envoi).
+      if (localStorage.getItem('fb_token')) localStorage.setItem('fb_token',r.token);
+      setMdp({actuel:"",nouveau:"",confirmer:""});
+      showToast("Mot de passe modifié. Vos autres appareils sont déconnectés ✓");
+    } catch(e){ showToast(e.message,"error"); }
+    finally{ setSavingMdp(false); }
+  };
+
+  const typeMdp=afficher?"text":"password";
+  return page(<>
+    <div className="fb-wrap" style={{paddingTop:22}}>
+      <button onClick={()=>go(retour)} style={{display:"inline-flex",alignItems:"center",gap:7,
+        background:"none",border:"none",cursor:"pointer",color:"var(--slate)",fontSize:14,
+        fontFamily:"var(--font-head)",fontWeight:600,padding:0}}>
+        <Icon name="arrowL" size={17}/>{isAdmin?"Tous les chantiers":"Mes chantiers"}
+      </button>
+      <h1 style={{margin:"14px 0 0",fontFamily:"var(--font-display)",fontWeight:700,fontSize:32,
+        textTransform:"uppercase",color:"var(--ink)",lineHeight:1.06}}>Mon compte</h1>
+    </div>
+    <main className="fb-wrap" style={{flex:1,paddingTop:22,paddingBottom:60}}>
+      <div className="fb-form2" style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:24,alignItems:"start"}}>
+        <Card>
+          <SectionTitle icon="user">Mes informations</SectionTitle>
+          <form onSubmit={enregistrerInfos} style={{display:"grid",gap:16}}>
+            <Field label="Nom" icon="user" value={form.nom} autoComplete="name"
+              onChange={v=>setForm(f=>({...f,nom:v}))}/>
+            <Field label="E-mail" icon="mail" type="email" value={form.email} autoComplete="email"
+              hint={isAdmin?"Il sert à vous connecter.":"Il sert à vous connecter et à recevoir les notifications."}
+              onChange={v=>setForm(f=>({...f,email:v}))}/>
+            {avecTelephone&&<Field label="Téléphone" icon="phone" type="tel" value={form.telephone} autoComplete="tel"
+              onChange={v=>setForm(f=>({...f,telephone:v}))}/>}
+            {emailChange&&<Field label="Mot de passe actuel" icon="lock" type="password" value={mdpEmail}
+              autoComplete="current-password" hint="Obligatoire pour changer d'e-mail." onChange={setMdpEmail}/>}
+            <div style={{display:"flex",justifyContent:"flex-end"}}>
+              <Btn variant="dark" icon="check" type="submit" disabled={!infosModifiees||savingInfos}>
+                {savingInfos?"Enregistrement…":"Enregistrer"}
+              </Btn>
+            </div>
+          </form>
+        </Card>
+        <Card>
+          <SectionTitle icon="lock">Mot de passe</SectionTitle>
+          <form onSubmit={changerMdp} style={{display:"grid",gap:16}}>
+            <Field label="Mot de passe actuel" icon="lock" type={typeMdp} value={mdp.actuel} autoComplete="current-password"
+              onChange={v=>setMdp(m=>({...m,actuel:v}))}/>
+            <Field label={`Nouveau mot de passe (min. ${MDP_MIN} caractères)`} icon="lock" type={typeMdp} value={mdp.nouveau}
+              autoComplete="new-password" onChange={v=>setMdp(m=>({...m,nouveau:v}))}/>
+            <Field label="Confirmer le nouveau mot de passe" icon="lock" type={typeMdp} value={mdp.confirmer}
+              autoComplete="new-password" onChange={v=>setMdp(m=>({...m,confirmer:v}))}/>
+            <label style={{display:"flex",alignItems:"center",gap:9,fontSize:13.5,color:"var(--slate)",cursor:"pointer"}}>
+              <input type="checkbox" checked={afficher} onChange={e=>setAfficher(e.target.checked)}
+                style={{width:18,height:18,accentColor:"var(--jaune-deep)"}}/>
+              Afficher les mots de passe
+            </label>
+            <p style={{margin:0,fontSize:13,color:"var(--muted)",lineHeight:1.5}}>
+              Après le changement, vos autres appareils sont déconnectés.
+            </p>
+            <div style={{display:"flex",justifyContent:"flex-end"}}>
+              <Btn variant="dark" icon="check" type="submit"
+                disabled={savingMdp||!mdp.actuel||!mdp.nouveau||!mdp.confirmer}>
+                {savingMdp?"Modification…":"Changer le mot de passe"}
+              </Btn>
+            </div>
+          </form>
+        </Card>
+      </div>
+    </main>
+  </>);
+}
+
 export function ChangeCode({ onDone }) {
   const [code,setCode]=useState("");
   const [confirm,setConfirm]=useState("");
@@ -1626,11 +1925,13 @@ export function ChangeCode({ onDone }) {
 
   const submit = async e => {
     e.preventDefault();
-    if (code.length < 6) {setErr("Le code doit faire au moins 6 caractères.");return;}
-    if (code !== confirm) {setErr("Les deux codes ne correspondent pas.");return;}
+    if (code.trim().length < MDP_MIN) {setErr(`Le mot de passe doit faire au moins ${MDP_MIN} caractères.`);return;}
+    if (code !== confirm) {setErr("Les deux mots de passe ne correspondent pas.");return;}
     setLoading(true);setErr("");
     try {
-      await apiFetch('/api/auth/client/change-code',{method:'POST',body:{new_code:code}});
+      const r=await apiFetch('/api/auth/client/change-code',{method:'POST',body:{new_code:code}});
+      // Les sessions ouvertes sont coupées par le changement : celle-ci continue avec le nouveau jeton.
+      localStorage.setItem('fb_token',r.token);
       onDone();
     } catch(e){setErr(e.message);}
     finally{setLoading(false);}
@@ -1660,7 +1961,7 @@ export function ChangeCode({ onDone }) {
           <form onSubmit={submit} style={{display:"grid",gap:16}}>
             <label style={{display:"block"}}>
               <span style={{display:"block",fontSize:13.5,fontWeight:600,color:"var(--ink)",marginBottom:7}}>
-                Nouveau mot de passe (min. 6 caractères)
+                Nouveau mot de passe (min. {MDP_MIN} caractères)
               </span>
               <span style={{display:"flex",alignItems:"center",gap:10,padding:"0 14px",background:"#fff",
                 border:"1.5px solid var(--line-strong)",borderRadius:"var(--r-input)",height:50}}>

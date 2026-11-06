@@ -10,93 +10,122 @@
 
 ## 🔄 Dernière session
 
-- **Date :** 2026-07-13 (session longue, entamée fin juin)
+- **Date :** 2026-11-06
 - **Développeur :** Florian
 
 ### Ce qui a été fait
 
-- **Sociétés + rôles Basic/Admin** (migration `2026-06-27_societes_type.sql`) : table
-  `fbelec.societes`, colonnes `clients.societe_id` / `role_societe`. Un compte « Admin » de
-  société **voit et gère les chantiers de tous les comptes de sa société** (helper
-  `allowedClientIds()` dans `routes/client/chantiers.js`, appliqué à TOUTES les routes client) ;
-  les cartes affichent « Créé par X » pour les chantiers des autres comptes.
-  **Page dédiée « Sociétés »** (bouton dans la barre de Chantiers suivis) : liste compacte,
-  renommage (PUT `/admin/societes/:id`), suppression, et modale 👤 « utilisateurs de la
-  société » avec rôle modifiable. Rattachement d'un compte = page Clients (modales créer/modifier).
-- **Références obligatoires** à la création (admin + client) : `reference_client` (sous
-  Client / 1ᵉʳ champ) + `reference_facturation` (si facturation différente), placeholder
-  « Société ou nom du client », validées backend (migration `2026-06-26_references.sql`).
-- **Type Monophasé/Triphasé obligatoire** (`chantiers.puissance_type`, whitelist backend)
-  à côté de la puissance, affiché partout.
-- **Fiche admin chantier** : bloc « Informations du dossier » (client, adresse, facturation,
-  références, puissance+type, durée, date, terrain) au-dessus de l'Avancement.
-- **Étapes : réordonnancement par glisser-déposer** (+ flèches ▲▼ tactiles). Plus de champ
-  « ordre » ; nouvel élément = fin de liste ; `PUT /etapes/reorder` en **2 passes** (index unique).
-- **Téléchargement des photos** (admin + client + lightbox) via `downloadFile()` fetch+blob
-  (cross-origin oblige).
-- **Reload complet à la connexion** (plus de cache mémoire ; parcours « changer mdp » préservé).
-- **Chantiers suivis** : tri par défaut **par société** ; cellule Chantier = **référence en
-  1ʳᵉ ligne (noir+gras)**, adresse en 2ᵉ ; le **filtre colonne Chantier porte sur la référence**
-  (liste + recherche interne). Colonne Société ajoutée puis **retirée** à la demande.
-- **Gestion clients** : colonne Société (+ badge Admin), tri par défaut société, **barre de
-  recherche** (nom/email/tél/société), filtres du haut (société dont « Sans société », rôle)
-  et **filtres de colonnes** (ColFilter sur Client/E-mail/Société/Chantiers).
-- **CSS mobile** : fix majeur sur Chantiers suivis (page à 465px sur 375 avec vraies données —
-  `min-width:0` étendu aux `<span>` + `StatusPill` borné avec ellipsis) ; champs uniformisés
-  (`div[style*="max-width"]{max-width:100%}` ≤640px). Vérifié à 375px avec données mockées.
-- WordPress `fbelec.fr` : boutons « Espace client / Nous contacter » confirmés en ligne
-  (l'invisibilité était du cache Cloudflare).
+- **« Nouveau chantier » (client `NouveauChantierClient` dans `client.jsx`, admin `AdminNouveauChantier`
+  dans `admin.jsx`, code identique)** : la carte est toujours affichée (plus de bouton « Pas encore
+  d'adresse ? »). Règle : adresse OU point obligatoire. Choisir une adresse BAN zoome dessus (zoom 18 sur
+  un numéro, 16 sinon). Retoucher ou effacer l'adresse rend la main au centrage par commune. La commune
+  n'est déduite du point que s'il n'y a pas d'adresse. Bouton « Retirer le point ». Point sans adresse :
+  la facturation passe d'office sur « Différente » (`factForcee`) et revient sur « Identique » dès qu'une
+  adresse est tapée, sauf si l'utilisateur a choisi lui-même. Le texte d'aide sous la carte est supprimé
+  (demande de Florian).
+- **Carte Google (`MapGoogle.jsx`)** : boutons Google remplacés par des boutons compacts Plan / Satellite /
+  Cadastre (30 px, `TAILLE_BOUTONS`) sur une ligne. Le cadastre est masquable et affiché au départ.
+  Commandes Google réduites (`controlSize`). Nouveau prop `centre` dans `MapGoogle`, `MapPicker` et
+  `CarteGps` (`ui.jsx`). `AddressAutocomplete` renvoie `position`.
+- **Carte de secours Leaflet (`MapPicker.jsx`)** : `dragging: !L.Browser.mobile`. Sur mobile, un doigt
+  fait défiler la page et deux doigts déplacent la carte. `.fb-map-pin{touch-action:none}` dans
+  `theme.css`.
+- **« Chantiers suivis » (`AdminList`, `admin.jsx`)** : nouveaux chantiers (`vu_admin=false`) dans un
+  bandeau en haut et aussi dans leur bloc. Le reste est groupé en blocs repliables par société
+  (« Sans société » en dernier). Les blocs ouverts sont mémorisés (`sessionStorage`
+  `fb_blocs_ouverts`). Un filtre ouvre les blocs concernés, qui restent refermables. Le bloc d'un
+  chantier ouvert reste ouvert au retour de sa fiche. Backend : `GET /api/admin/chantiers` renvoie
+  `cl.societe_id` (`routes/admin/chantiers.js`).
+- **Revue en 8 agents** : 4 constats confirmés et corrigés (forçage de la facturation, défilement mobile
+  Leaflet, centre de carte périmé, bloc refermé au retour de fiche). Le constat « regroupement sans
+  `societe_id` si l'API n'est pas redémarrée » a été écarté : il suffit de déployer l'API avant le front.
+- **Vérifié en preview** (PC + mobile 375 px). Builds `dist/dev` et `dist/prod` refaits et contrôlés.
+- **Git** : tout est commité (`d4b333c`, y compris le lot du 2026-11-02) et poussé sur `DEV`. La PR #2
+  (`DEV` → `main`) a un nouveau titre et une nouvelle description.
 
 ### En cours / pas terminé
 
-- **Dernier build front à déployer/confirmer** : les toutes dernières retouches (référence en
-  gras 1ʳᵉ ligne, filtre colonne sur la ref, filtres colonnes Gestion clients) sont buildées
-  (`frontend/dist/` à jour) mais le déploiement n'a **pas été confirmé**. Commandes : scp
-  `dist/*` → `~/suividechantier.fbelec.fr/` + **chmod 755/644**.
-- **Migrations** : `terrain` confirmée en prod ; `societes_type` visiblement passée (les
-  sociétés fonctionnent en prod d'après les captures) ; **vérifier** que `archive`,
-  `etapes_date` et `references` sont bien toutes passées (idempotentes — re-passables sans risque).
-- **SMTP toujours non configuré** en prod → aucun e-mail (avancement d'étape, bienvenue,
-  reset) ne part. Variables à saisir dans cPanel → Setup Node.js App : `SMTP_HOST/PORT/SECURE/
-  USER/PASS/FROM` + `CONTACT_EMAIL`, puis `touch tmp/restart.txt`.
-- `apercu-guide.html` (racine) toujours à supprimer (aperçu local de Tony, non déployé).
+- **Déploiement : lignes données, exécution non confirmée.** Ordre : migrations du lot 2026-11-02
+  (si pas déjà faites), puis `backend/src` + restart (pour `societe_id`), puis le front `dist/dev` /
+  `dist/prod`. Florian n'a pas dit quelles migrations il a déjà lancées.
+- **Questions ouvertes pour Florian** :
+  - Garder ou supprimer la phrase sous le champ adresse (« Pas encore d'adresse ? Laissez ce champ vide
+    et placez un point sur la carte. ») ?
+  - Les questions du 2026-11-02 restent sans réponse (formulation « contactez votre administrateur »,
+    les 4 problèmes antérieurs : voir Pièges).
 
 ### Prochaines étapes
 
-1. Déployer/confirmer le dernier build front (+ backend `routes/admin/chantiers.js` si la
-   version en ligne ne renvoie pas encore `societe_nom`/`reference_client` dans la liste).
-2. **Configurer le SMTP** et tester un mail réel (changer l'état d'une étape).
-3. Repasser les 4 migrations idempotentes pour être sûr (archive, etapes_date, references,
-   societes_type), puis QA rapide : société admin voit les chantiers de ses collègues,
-   drag & drop étapes, téléchargement photo, création chantier (type + références bloquants).
-4. Sécurité en attente : rotation mot de passe DB + `JWT_SECRET`, `CORS_ORIGIN` exact.
+1. Confirmer le déploiement DEV puis PROD. Tester : la carte toujours visible, la facturation forcée
+   avec un point sans adresse, les blocs société, les boutons Plan / Satellite / Cadastre sur
+   téléphone réel.
+2. Tester en PROD Mon compte et le mot de passe oublié avec un vrai mail (jamais testés avec un vrai
+   SMTP ni sur le vrai PG 9.6).
+3. Relire puis merger la PR #2 vers `main` quand la PROD est validée.
+4. Reprendre les étapes encore ouvertes du 2026-11-02 : expéditeur « FB ELEC> », SMTP en DEV, rotation
+   du mot de passe DB et de `JWT_SECRET`, supprimer `apercu-guide.html`.
 
 ### Pièges / décisions / à savoir
 
-- **Anti-IDOR sociétés** : toute NOUVELLE route client doit passer par `allowedClientIds()`
-  (jamais `client_id = req.clientId` en dur) sinon un admin de société perdra l'accès — ou
-  pire, un basic verra trop. Rôles whitelistés backend (`basic`/`admin`).
-- **Étapes** : ne pas réintroduire de saisie manuelle d'« ordre » ; le reorder DOIT rester en
-  2 passes (index unique `ordre` sur étapes actives → un swap direct casse en 23505).
-- **ColFilter dans une Card** : la carte doit être `overflow:visible` + wrapper interne
-  arrondi pour les lignes (sinon les menus déroulants sont coupés) — pattern appliqué sur
-  Chantiers suivis ET Gestion clients.
-- **Méthode de vérif front** : les listes vides masquent les bugs → en preview, **mocker
-  `window.fetch`** avec des données réalistes (labels longs) puis mesurer débordements/styles.
-  C'est ce qui a permis d'attraper le bug 465px et de tout valider sans API locale.
-- **Règle CSS mobile** : `.fb-wrap div,.fb-wrap span{min-width:0}` — les cellules de listes
-  sont des `<span>`, ne pas l'oublier pour de futures listes.
-- **Pièges o2switch/Drive inchangés** : `chmod 755/644` après chaque scp (sinon 403) ;
-  supprimer `frontend/public/desktop.ini` avant build ; psql/node en SSH bash depuis `cd ~`.
-- **Dette** : URL `https://suividechantier.fbelec.fr` codée en dur (clic logo, `ui.jsx` +
-  `client.jsx`). L'admin de société peut aussi **modifier** les chantiers de sa société
-  (décision par défaut, restreignable en lecture seule sur demande).
+- **Ordre de déploiement : API (avec migrations) avant le front.** Sinon tous les chantiers d'une
+  société tombent dans un seul bloc (`societe_id` absent) et Mon compte ne répond pas.
+- **Plan / Satellite sont nos propres boutons** (`mapTypeControl:false`) : `controlSize` ne réduit pas le
+  texte des boutons Google. Leur taille se règle avec `TAILLE_BOUTONS` dans `MapGoogle.jsx`.
+- **`centreCarte` n'est posé que par `onSelect`** (choix d'une adresse BAN) et remis à `null` à chaque
+  frappe dans le champ adresse. Tant qu'il est posé, il bloque le centrage par commune.
+- **Tout choix manuel de facturation annule `factForcee`** (`setFactForcee(false)` dans le `onChange`).
+  À ne pas retirer, sinon un choix manuel est écrasé.
+- **Google Maps marche maintenant en local** (facturation apparemment active). Le repli IGN reste en
+  place (délai de 10 s, clé refusée).
+- **Preview** : monter les composants avec les dépendances `/node_modules/.vite/deps/...?v=<hash>`. Après
+  une modification, naviguer de nouveau sur la page, sinon d'anciens modules restent en cache. Les captures
+  Google peuvent arriver avec quelques secondes de retard.
+- **`.htaccess` du front** : absent de `frontend/public` et donc des builds. Il n'existe que sur le
+  serveur, et `scp -r *` ne l'écrase pas. Ne pas vider le dossier distant.
+- Rappels du 2026-11-02 toujours valables : `desktop.ini` fantômes à supprimer avant chaque build ;
+  mauvais mot de passe actuel = 403 ; ne pas remonter les limiteurs sur le chemin complet ; clés Google
+  jamais affichées ni commitées ; commandes complètes sans variables pour Florian.
 
 ---
 
 ## 🗄️ Historique des sessions précédentes
 
 <!-- /passation descend ici l'ancienne entrée à chaque nouvelle passation. -->
+
+- **2026-11-02 — Florian (carte Google + cadastre, Mon compte, mot de passe oublié)** : `MapGoogle.jsx`
+  + `carte.js` avec repli IGN ; espace Mon compte (`routes/compte.js`) ; sessions coupées par
+  `mdp_version` ; mot de passe oublié avec temporaire de 24 h rangé à part ; alerte à l'ancienne adresse
+  à chaque changement d'e-mail ; plafonds par compte ; 2e revue (24 corrections) ; migrations
+  `2026-11-02_mon_compte.sql` et `2026-11-02_mdp_oublie.sql` ; SECURITY_AUDIT §21-22 ; 199/199 tests
+  sur PGlite.
+
+- **2026-10-24 — Tony (Google Cloud, spec de la carte)** : décision carte Google + cadastre IGN (modèle
+  du formulaire Enedis) ; facturation, budget et alertes ; Maps JavaScript API seule ; clés
+  « FBELEC carte DEV » et « FBELEC carte PROD » restreintes par référents, transmises à Florian hors
+  Drive ; environ 10 000 chargements par mois gratuits ; Tony a un accès admin au projet Google Cloud.
+  Aucun code modifié.
+
+- **2026-10-19 — Florian (GPS, badge Nouveau, notifications par chantier, sécurité)** : point
+  GPS à la création (`gps_lat/gps_lng`, `MapPicker.jsx` Leaflet + IGN/OSM/cadastre) ; badge
+  « Nouveau » (`chantiers.vu_admin`) ; notifications par chantier (`fbelec.chantier_abonnes`,
+  rôles société Admin/Basic uniquement, abonnés en lecture seule + e-mails) ; durcissements
+  (`.htaccess` deny sur `backend/src` et `backend/assets`, compte désactivé refusé, `esc()` dans
+  les e-mails, contrôle avant multer) ; diagnostic blocage réseau d'un client ; revue + tests
+  PGlite 40/40. DEV et PROD déployés ; commits dans la PR #2 (non mergée).
+
+- **2026-07-30 — Florian (mandat, facturation, fil de messages)** : mandat EDF PDF prérempli et
+  généré à la création (`services/mandat.js`, pdf-lib) ; contact facturation ; documents
+  obligatoires bloquants ; fil de messages client ↔ FB ELEC (`notes.de_client`, composant `Notes`
+  partagé) ; commentaire de création ; référence client en titre côté client ; fix 409
+  « Référence déjà utilisée » (`'TMP-'||md5`, setval DEV) ; vraie cause d'erreur au login ;
+  référence client dans les e-mails. PR #1 mergée.
+
+- **2026-07-13 — Florian (sociétés, listes, mobile)** : sociétés + rôles Basic/Admin (visibilité
+  société via `allowedClientIds()`, page dédiée « Sociétés »), références + type Mono/Triphasé
+  obligatoires, bloc « Informations du dossier », drag & drop étapes (reorder 2 passes),
+  téléchargement photos, reload au login, Chantiers suivis (réf noir/gras 1ʳᵉ ligne + filtres),
+  Gestion clients (recherche + filtres colonnes), gros fix CSS mobile (min-width:0 sur spans,
+  StatusPill ellipsis). Boutons WordPress confirmés (cache Cloudflare).
 
 - **2026-06-26 — Florian (bouton Espace client WordPress)** : bouton « ESPACE CLIENT » ajouté
   dans l'en-tête du site vitrine `fbelec.fr` → header codé en dur dans `header.php` du thème

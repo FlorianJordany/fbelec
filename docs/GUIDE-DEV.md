@@ -191,7 +191,10 @@ cd F:\OutiLab\fbelecv2\frontend
 Crée/édite `frontend\.env` (URL **protocol-relative**, sans `http:`/`https:`) :
 ```env
 VITE_API_URL=//fbelec-api.sc1qize9193.universe.wf
+VITE_GOOGLE_MAPS_KEY=<clé Google « FBELEC carte DEV »>
 ```
+> Clé Google : publique par nature, protégée par ses restrictions de domaines dans Google
+> Cloud (cf. SECURITY_AUDIT.md § 21). Sans clé, la carte IGN de secours s'affiche.
 > ⚠️ Ce fichier `.env` **ne s'uploade jamais** : il est lu par Vite **au build** et
 > l'URL est figée dans le `dist`. On n'envoie sur le serveur que le dossier `dist/`.
 

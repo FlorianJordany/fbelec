@@ -171,10 +171,15 @@ PGPASSWORD='MOT_DE_PASSE_BDD' psql -h localhost -p 5432 -U sc1qize9193_fbprod -d
 ```powershell
 cd F:\OutiLab\fbelecv2\frontend
 ```
-Édite `frontend\.env` (protocol-relative — ce fichier reste local, il n'est jamais uploadé) :
+Édite `frontend\.env.production` (lu par `npm run build` ; protocol-relative — ce fichier reste
+local, il n'est jamais uploadé ; `frontend\.env` reste réservé au DEV) :
 ```env
-VITE_API_URL=//api-suivi.fbelec.fr
+VITE_API_URL=//api-suividechantier.fbelec.fr
+VITE_GOOGLE_MAPS_KEY=<clé Google « FBELEC carte PROD »>
 ```
+> Clé Google PROD (restreinte à `https://suividechantier.fbelec.fr/*`, cf. SECURITY_AUDIT.md § 21).
+> Après le build, vérifier qu'aucune trace du DEV n'est dans `dist` : `grep sc1qize9193 dist/assets/*.js`
+> ne doit rien renvoyer.
 Vérifie le logo `frontend\public\assets\logo-fbelec.png`, puis :
 ```powershell
 npm run build
